@@ -15,24 +15,12 @@ export interface GridCoordinate {
   elevation: number;
 }
 
-// Arc 1960 to WGS84 (Bursa-Wolf 7-Parameter Standard for East Africa)
-const BURSA_WOLF_ARC1960_WGS84 = {
-  dx: -160.0,
-  dy: -6.0,
-  dz: -302.0,
-  rx: 0.0,
-  ry: 0.0,
-  rz: 0.0,
-  ds: 0.0,
-};
+// Arc 1960 → WGS84 (Bursa-Wolf) is now handled by src/core/crs.ts proj4 defs (EPSG:21037).
+import { geoidUndulation as _geoidUndulation, GeoidModel } from "./crs";
 
-// Regional Geoid undulation N table (EGM2008 / KEN_GEOID interpolation)
+// Regional Geoid undulation N (delegates to crs.ts pluggable geoid model)
 export function getGeoidUndulation(lat: number, lon: number): number {
-  // Bilinear interpolation over East African geoid surface (~ -18.5m in Nairobi, -12m in Mombasa, -22m in Kisumu)
-  const baseN = -18.5;
-  const latDelta = (lat - (-1.286)) * -1.8;
-  const lonDelta = (lon - 36.817) * 1.2;
-  return Number((baseN + latDelta + lonDelta).toFixed(3));
+  return _geoidUndulation(lat, lon, "EGM2008");
 }
 
 /**

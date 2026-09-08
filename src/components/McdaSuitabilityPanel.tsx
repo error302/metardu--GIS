@@ -39,7 +39,7 @@ export const McdaSuitabilityPanel: React.FC<McdaSuitabilityPanelProps> = ({
         <div className="flex items-center gap-2">
           <Sliders className="w-5 h-5 text-blue-400" />
           <h2 className="text-lg font-bold tracking-tight text-white font-['Plus_Jakarta_Sans']">
-            UN-HABITAT CLIMATE-SMART SETTLEMENT SUITABILITY (MCDA)
+            SETTLEMENT SUITABILITY (MCDA) — GENERIC
           </h2>
         </div>
         <p className="text-xs text-slate-400 mt-1">

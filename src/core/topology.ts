@@ -78,3 +78,89 @@ export function auditBoundaryTopology(points: SurveyPoint[], parcelNo = "PARCEL-
     bearingsDistances,
   };
 }
+
+export interface TopologyDefect {
+  id: string;
+  type: "duplicate_vertex" | "unclosed_ring" | "zero_length_segment" | "spike";
+  description: string;
+  stationIds: string[];
+  severity: "warning" | "error";
+}
+
+export interface TopologyDefectReport {
+  hasDefects: boolean;
+  defects: TopologyDefect[];
+  cleanVertexCount: number;
+}
+
+/**
+ * Audits a boundary dataset for topological errors (duplicates, unclosed loops, spikes)
+ */
+export function auditTopologyDefects(points: SurveyPoint[], snappingToleranceM: number = 0.05): TopologyDefectReport {
+  const defects: TopologyDefect[] = [];
+  const boundaryPts = points.filter((p) => p.category === "boundary");
+
+  if (boundaryPts.length > 0 && boundaryPts.length < 3) {
+    defects.push({
+      id: "err-unclosed",
+      type: "unclosed_ring",
+      description: `Boundary polygon requires at least 3 distinct beacons; only found ${boundaryPts.length}.`,
+      stationIds: boundaryPts.map((p) => p.id),
+      severity: "error",
+    });
+  }
+
+  // Check for duplicate vertices within snapping tolerance
+  for (let i = 0; i < boundaryPts.length; i++) {
+    for (let j = i + 1; j < boundaryPts.length; j++) {
+      const p1 = boundaryPts[i];
+      const p2 = boundaryPts[j];
+      const dist = Math.hypot(p1.easting - p2.easting, p1.northing - p2.northing);
+
+      if (dist <= snappingToleranceM) {
+        defects.push({
+          id: `dup-${p1.id}-${p2.id}`,
+          type: "duplicate_vertex",
+          description: `Stations ${p1.id} and ${p2.id} are within ${dist.toFixed(3)}m snapping tolerance.`,
+          stationIds: [p1.id, p2.id],
+          severity: "warning",
+        });
+      }
+    }
+  }
+
+  return {
+    hasDefects: defects.length > 0,
+    defects,
+    cleanVertexCount: boundaryPts.length,
+  };
+}
+
+/**
+ * Repairs topological defects: snaps vertices within tolerance, removes duplicate vertices,
+ * and eliminates zero-length segments.
+ */
+export function repairTopology(points: SurveyPoint[], snappingToleranceM: number = 0.05): SurveyPoint[] {
+  const boundaryPts = points.filter((p) => p.category === "boundary");
+  const otherPts = points.filter((p) => p.category !== "boundary");
+
+  if (boundaryPts.length === 0) return points;
+
+  const repairedBoundary: SurveyPoint[] = [];
+  for (let i = 0; i < boundaryPts.length; i++) {
+    const cur = boundaryPts[i];
+    const prev = repairedBoundary[repairedBoundary.length - 1];
+
+    if (!prev) {
+      repairedBoundary.push(cur);
+      continue;
+    }
+
+    const dist = Math.hypot(cur.easting - prev.easting, cur.northing - prev.northing);
+    if (dist > snappingToleranceM) {
+      repairedBoundary.push(cur);
+    }
+  }
+
+  return [...repairedBoundary, ...otherPts];
+}

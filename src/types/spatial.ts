@@ -24,6 +24,20 @@ export interface SurveyPoint {
   longitude?: number;
   timestamp?: string;
   accuracyM?: number;
+  properties?: Record<string, any>;
+}
+
+export interface AttributeField {
+  name: string;
+  type: "string" | "number" | "boolean";
+  alias?: string;
+}
+
+export interface SpatialFeature {
+  id: string;
+  geometryType: "Point" | "LineString" | "Polygon";
+  coordinates: any;
+  properties: Record<string, any>;
 }
 
 export interface BearingDistance {
@@ -140,6 +154,16 @@ export interface ExposedAsset {
   distanceToSinkM: number;
 }
 
+export interface OffGridPlannerParams {
+  costPerKwSolar: number; // USD / kWp
+  costPerKwhBattery: number; // USD / kWh storage
+  demandPerHhKwh: number; // kWh / household / day
+  gridThresholdKm: number; // km distance cutoff for grid extension
+  minMiniGridHh: number; // minimum households to justify mini-grid
+  peakSunHours: number; // average peak sun hours (e.g. 4.5 - 6.0)
+  batteryAutonomyDays: number; // storage backup duration (days)
+}
+
 export interface EnergyCluster {
   id: string;
   centroid: [number, number];
@@ -151,6 +175,8 @@ export interface EnergyCluster {
   recommendedType: "Mini-Grid" | "Stand-Alone SHS" | "Grid Extension";
   dailyDemandKwh: number;
   recommendedSolarKw: number;
+  batteryStorageKwh: number;
+  capexEstimateUsd: number;
   nightTimeLuminosity: "Dark (Unserved)" | "Dim" | "Bright (Electrified)";
 }
 

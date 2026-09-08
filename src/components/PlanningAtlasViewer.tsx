@@ -15,7 +15,7 @@ export const PlanningAtlasViewer: React.FC<PlanningAtlasViewerProps> = ({ result
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `UN_Habitat_Planning_Atlas_${result.metadata.title.replace(/\s+/g, "_")}.svg`;
+    a.download = `Regional_Planning_Atlas_${result.metadata.title.replace(/\s+/g, "_")}.svg`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -26,7 +26,7 @@ export const PlanningAtlasViewer: React.FC<PlanningAtlasViewerProps> = ({ result
     win.document.write(`
       <html>
         <head>
-          <title>UN-Habitat Planning Atlas - ${result.metadata.title}</title>
+          <title>Regional Planning Atlas - ${result.metadata.title}</title>
           <style>
             @page { size: A3 landscape; margin: 0; }
             body { margin: 0; background: #0B0F17; display: flex; justify-content: center; align-items: center; }
@@ -49,7 +49,7 @@ export const PlanningAtlasViewer: React.FC<PlanningAtlasViewerProps> = ({ result
         <div className="flex items-center gap-2">
           <Globe className="w-4 h-4 text-sky-400" />
           <span className="font-bold text-xs text-white uppercase tracking-wider font-['Plus_Jakarta_Sans']">
-            UN-HABITAT REGIONAL GIS PLANNING ATLAS — MUNICIPAL &amp; DONOR DECISION DOSSIER
+            REGIONAL GIS PLANNING ATLAS — SETTLEMENT &amp; HAZARD DECISION DOSSIER
           </span>
         </div>
 

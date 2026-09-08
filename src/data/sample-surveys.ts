@@ -122,23 +122,24 @@ export const BENCHMARK_SCENARIOS: BenchmarkScenario[] = [
     ],
   },
 
-  // ── Benchmark 3: UN-Habitat Climate-Smart Settlement & Sun King Solar Reach ──
+  // ── Benchmark 3: Settlement Suitability & Off-Grid Electrification (Generic) ──
+  // Methodology refs: UN-Habitat/FAO suitability, SE4All/ESMAP off-grid planning (see methodology-registry)
   {
-    id: "un-habitat-sunking",
-    title: "Climate-Smart Settlement & Off-Grid Energy Reach",
-    badge: "UN-Habitat & Sun King",
-    description: "Multi-criteria suitability modeling (MCDA), flood sink hazard exposure audit, and Sun King solar mini-grid clustering for unserved communities.",
+    id: "settlement-electrification",
+    title: "Settlement Suitability & Off-Grid Electrification",
+    badge: "Suitability + Electrification",
+    description: "Generic MCDA suitability, flood sink exposure audit, and settlement clustering for mini-grid vs SHS planning (methodology refs: UN-Habitat/FAO, SE4All/ESMAP).",
     metadata: {
-      id: "UNH-ETH-2026-08",
-      title: "Gambella-Turkana Resilient Settlement & Energy Corridor",
+      id: "MET-ETH-2026-08",
+      title: "Gambella-Turkana Settlement & Energy Corridor",
       locality: "Cross-Border Development Zone",
       country: "Regional East Africa",
       crs: "WGS 84 / UTM zone 36N (EPSG: 32636)",
-      surveyorName: "UN-Habitat & Sun King GIS Specialist",
-      registrationNo: "UNH-GIS-092",
+      surveyorName: "GIS Specialist",
+      registrationNo: "MET-GIS-092",
       date: "2026-09-08",
       scale: "1:5,000",
-      organization: "UN-Habitat Urban Resilience & Sun King Decentralized Utility",
+      organization: "Metardu GIS — Generic Planning Template",
     },
     points: [
       // Master Settlement Perimeter

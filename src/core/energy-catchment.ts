@@ -1,13 +1,25 @@
 /**
- * Off-Grid Energy Access & Service Catchment Modeler (Sun King & Electrification Planning)
- * Clusters settlements, evaluates distance to transmission lines, and models solar mini-grid vs SHS potential.
+ * Off-Grid Electrification Planner — Generic Service Catchment Modeler
+ * Clusters settlements, evaluates distance to transmission lines, and models mini-grid vs SHS potential.
+ * Supports user-configurable cost/kWp, daily demand/HH, grid distance threshold, and mini-grid size threshold.
  */
 
-import { SurveyPoint, EnergyCluster, SurveyVector } from "../types/spatial";
+import { SurveyPoint, EnergyCluster, SurveyVector, OffGridPlannerParams } from "../types/spatial";
+
+export const DEFAULT_OFFGRID_PARAMS: OffGridPlannerParams = {
+  costPerKwSolar: 1100, // USD per kWp
+  costPerKwhBattery: 350, // USD per kWh storage
+  demandPerHhKwh: 1.4, // kWh per household per day
+  gridThresholdKm: 1.5, // km threshold for grid extension
+  minMiniGridHh: 40, // minimum households to justify mini-grid
+  peakSunHours: 5.0, // average peak sun hours
+  batteryAutonomyDays: 1.5, // days of autonomy
+};
 
 export function modelEnergyClusters(
   points: SurveyPoint[],
-  vectors: SurveyVector[]
+  vectors: SurveyVector[],
+  params: OffGridPlannerParams = DEFAULT_OFFGRID_PARAMS
 ): EnergyCluster[] {
   // Find all settlement points or general household structures
   const settlementPts = points.filter(
@@ -18,7 +30,7 @@ export function modelEnergyClusters(
 
   const gridVectors = vectors.filter((v) => v.category === "utility" || v.code === "PWR" || v.code === "GRID");
 
-  // Spatial clustering (group points within 200m radius)
+  // Spatial clustering (group points within 250m radius)
   const CLUSTER_DIST = 250;
   const clusters: SurveyPoint[][] = [];
   const visited = new Set<string>();
@@ -77,24 +89,40 @@ export function modelEnergyClusters(
     }
     const gridDistanceKm = Number((minDistM / 1000).toFixed(2));
 
-    // Estimate household density (each point represents ~3-8 households in rural settlement density)
+    // Household count and energy sizing dynamically computed from user params
     const householdCount = group.length * 6;
     const populationEstimate = householdCount * 5; // 5 persons/HH
-    const dailyDemandKwh = Number((householdCount * 1.4).toFixed(1)); // 1.4 kWh/HH/day for rural lighting, phone charging, TV, small cooling
-    const recommendedSolarKw = Number((dailyDemandKwh / 4.8).toFixed(1)); // 4.8 peak sun hours in East Africa (GHI ~ 5.5 kWh/m2)
+    const dailyDemandKwh = Number((householdCount * params.demandPerHhKwh).toFixed(1));
+    const recommendedSolarKw = Number((dailyDemandKwh / params.peakSunHours).toFixed(1));
+    const batteryStorageKwh = Number((dailyDemandKwh * params.batteryAutonomyDays).toFixed(1));
 
+    // Dynamic Electrification Decision Rule based on user thresholds
     let recommendedType: EnergyCluster["recommendedType"] = "Stand-Alone SHS";
-    if (gridDistanceKm < 1.2) {
+    let capexEstimateUsd = 0;
+
+    if (gridDistanceKm <= params.gridThresholdKm) {
       recommendedType = "Grid Extension";
-    } else if (householdCount >= 50 && maxR <= 350) {
+      // Grid extension cost ~ $9,000 / km + $150 per connection
+      capexEstimateUsd = Math.round(gridDistanceKm * 9000 + householdCount * 150);
+    } else if (householdCount >= params.minMiniGridHh && maxR <= 450) {
       recommendedType = "Mini-Grid";
+      // Mini-grid CAPEX = Solar Generation + Battery Storage + LV reticulation ($250/HH)
+      capexEstimateUsd = Math.round(
+        recommendedSolarKw * params.costPerKwSolar +
+          batteryStorageKwh * params.costPerKwhBattery +
+          householdCount * 250
+      );
+    } else {
+      recommendedType = "Stand-Alone SHS";
+      // Stand-alone SHS average unit cost ~ $180 per household kit
+      capexEstimateUsd = Math.round(householdCount * 180);
     }
 
-    // Simulated VIIRS Black Marble nocturnal luminescence
+    // Simulated night lights luminosity based on proximity to grid
     let nightTimeLuminosity: EnergyCluster["nightTimeLuminosity"] = "Dark (Unserved)";
     if (gridDistanceKm < 1.0) {
       nightTimeLuminosity = "Bright (Electrified)";
-    } else if (gridDistanceKm < 3.0) {
+    } else if (gridDistanceKm < 2.5) {
       nightTimeLuminosity = "Dim";
     }
 
@@ -105,10 +133,12 @@ export function modelEnergyClusters(
       populationEstimate,
       clusterRadiusM: Math.round(maxR),
       gridDistanceKm,
-      solarGhiKwhM2: 5.6, // East Africa high solar irradiance
+      solarGhiKwhM2: Number((params.peakSunHours * 1.1).toFixed(1)),
       recommendedType,
       dailyDemandKwh,
       recommendedSolarKw,
+      batteryStorageKwh,
+      capexEstimateUsd,
       nightTimeLuminosity,
     });
   }

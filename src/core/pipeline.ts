@@ -9,9 +9,11 @@ import {
   PipelineTelemetry,
   ProjectMetadata,
   McdaWeights,
+  OffGridPlannerParams,
 } from "../types/spatial";
 import { parseRawSurveyText } from "./parser";
-import { reduceOrthometricHeight } from "./geodesy";
+import { reduceOrthometricHeight } from "./crs";
+import { CRS_EPSG_FROM_METADATA, toWGS84 } from "./crs";
 import { generateFeatureVectors } from "./feature-coding";
 import { generateTinMesh } from "./tin-engine";
 import { generateContours } from "./contour-engine";
@@ -19,12 +21,13 @@ import { auditBoundaryTopology } from "./topology";
 import { generateCorridorBuffers } from "./buffer-engine";
 import { evaluateSuitabilityGrid, DEFAULT_MCDA_WEIGHTS } from "./mcda-suitability";
 import { auditHazardExposure } from "./hazard-exposure";
-import { modelEnergyClusters } from "./energy-catchment";
+import { modelEnergyClusters, DEFAULT_OFFGRID_PARAMS } from "./energy-catchment";
 
 export async function runAutonomousGisPipeline(
   rawInput: string | SurveyPoint[],
   metadata: ProjectMetadata,
-  mcdaWeights: McdaWeights = DEFAULT_MCDA_WEIGHTS
+  mcdaWeights: McdaWeights = DEFAULT_MCDA_WEIGHTS,
+  offGridParams: OffGridPlannerParams = DEFAULT_OFFGRID_PARAMS
 ): Promise<PipelineResult> {
   const startTime = performance.now();
   const telemetries: PipelineTelemetry[] = [];
@@ -65,18 +68,17 @@ export async function runAutonomousGisPipeline(
 
   // ── Step 2: Geodetic & Geoid MSL Elevation Reduction (H = h - N) ──
   const t1 = performance.now();
+  const srcEpsg = CRS_EPSG_FROM_METADATA(metadata.crs);
   const reducedPoints = points.map((p) => {
-    // Standard central Kenya lat/lon approximation from UTM 37S coordinates
-    const approxLat = (p.northing - 10000000) / 110574;
-    const approxLon = 36.8 + (p.easting - 250000) / 111320;
-    const { orthometricH, geoidN } = reduceOrthometricHeight(p.elevation, approxLat, approxLon);
+    const [lon, lat] = toWGS84(srcEpsg, p.easting, p.northing);
+    const { orthometricH, geoidN } = reduceOrthometricHeight(p.elevation, lat, lon);
     return {
       ...p,
       elevation: orthometricH,
       ellipsoidHeight: p.elevation,
       geoidN,
-      latitude: Number(approxLat.toFixed(6)),
-      longitude: Number(approxLon.toFixed(6)),
+      latitude: Number(lat.toFixed(6)),
+      longitude: Number(lon.toFixed(6)),
     };
   });
   const d1 = Number((performance.now() - t1).toFixed(1));
@@ -134,37 +136,37 @@ export async function runAutonomousGisPipeline(
     details: `Generated ${buffers.length} corridor reserves (15m road / 30m riparian setbacks).`,
   });
 
-  // ── Step 7: UN-Habitat Climate-Smart Suitability (MCDA) ──
+  // ── Step 7: Settlement Suitability (MCDA) ──
   const t6 = performance.now();
   const suitability = evaluateSuitabilityGrid(tin, vectors, mcdaWeights, 20);
   const d6 = Number((performance.now() - t6).toFixed(1));
   telemetries.push({
-    stepName: "7. UN-Habitat Climate-Smart MCDA",
+    stepName: "7. Settlement Suitability (MCDA)",
     durationMs: d6,
     status: "pass",
     details: `Computed ${suitability.length} multi-criteria suitability cells across terrain slope & setbacks.`,
   });
 
-  // ── Step 8: Hazard & Climate Risk Vulnerability Audit ──
+  // ── Step 8: Hazard & Flood Exposure Audit ──
   const t7 = performance.now();
   const { sinks: hazardSinks, exposedAssets } = auditHazardExposure(tin, reducedPoints);
   const d7 = Number((performance.now() - t7).toFixed(1));
   telemetries.push({
-    stepName: "8. Hazard & Inundation Risk Audit",
+    stepName: "8. Hazard & Flood Exposure Audit",
     durationMs: d7,
     status: exposedAssets.length > 0 ? "warn" : "pass",
     details: `Identified ${hazardSinks.length} depression sinks. Audited ${exposedAssets.length} exposed assets in flood path.`,
   });
 
-  // ── Step 9: Sun King Off-Grid Energy Reach & Clustering ──
+  // ── Step 9: Off-Grid Electrification Planner ──
   const t8 = performance.now();
-  const energyClusters = modelEnergyClusters(reducedPoints, vectors);
+  const energyClusters = modelEnergyClusters(reducedPoints, vectors, offGridParams);
   const d8 = Number((performance.now() - t8).toFixed(1));
   telemetries.push({
-    stepName: "9. Sun King Energy Catchment Sizer",
+    stepName: "9. Off-Grid Electrification Sizer",
     durationMs: d8,
     status: "pass",
-    details: `Clustered ${energyClusters.length} settlement zones. Evaluated mini-grid vs SHS potential.`,
+    details: `Clustered ${energyClusters.length} settlement zones. Evaluated mini-grid vs SHS vs grid extension.`,
   });
 
   const totalDurationMs = Number((performance.now() - startTime).toFixed(1));

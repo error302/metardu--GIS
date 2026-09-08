@@ -11,8 +11,12 @@ import {
   FileText,
   MapPin,
   Clock,
+  Globe,
+  Save,
+  FolderOpen,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
+import { listSupportedEPSG, crsEpsgFromMetadata } from "../core/crs";
 
 export type ActiveTab =
   | "canvas2d"
@@ -32,6 +36,10 @@ interface HeaderProps {
   onRunPipeline: () => void;
   onOpenExport: () => void;
   totalDurationMs: number;
+  currentCrs?: string;
+  onCrsChange?: (epsg: number) => void;
+  onSaveProject?: () => void;
+  onOpenProjectFile?: (content: string) => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -42,7 +50,13 @@ export const Header: React.FC<HeaderProps> = ({
   onRunPipeline,
   onOpenExport,
   totalDurationMs,
+  currentCrs,
+  onCrsChange,
+  onSaveProject,
+  onOpenProjectFile,
 }) => {
+  const supportedCrs = listSupportedEPSG();
+  const activeEpsg = crsEpsgFromMetadata(currentCrs || selectedScenario.metadata.crs);
   return (
     <header className="bg-[#0B0F17] border-b border-slate-800 px-4 py-2.5 flex flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -61,7 +75,7 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Survey-to-GIS Precision, UN-Habitat Resilience &amp; Sun King Energy Planning
+              Survey-to-GIS Precision, Settlement Suitability &amp; Off-Grid Electrification
             </p>
           </div>
         </div>
@@ -81,6 +95,24 @@ export const Header: React.FC<HeaderProps> = ({
               {BENCHMARK_SCENARIOS.map((sc) => (
                 <option key={sc.id} value={sc.id} className="bg-slate-900 text-white">
                   {sc.title} ({sc.badge})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* CRS Selector */}
+          <div className="flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/60 rounded-md px-2.5 py-1.5">
+            <Globe className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <span className="text-xs text-slate-400 font-medium">CRS:</span>
+            <select
+              value={activeEpsg}
+              onChange={(e) => onCrsChange?.(Number(e.target.value))}
+              className="bg-transparent text-xs text-white font-semibold focus:outline-none cursor-pointer max-w-[170px] truncate"
+              title="Coordinate Reference System (proj4)"
+            >
+              {supportedCrs.map((c) => (
+                <option key={c.epsg} value={c.epsg} className="bg-slate-900 text-white">
+                  EPSG:{c.epsg} — {c.name}
                 </option>
               ))}
             </select>
@@ -106,6 +138,42 @@ export const Header: React.FC<HeaderProps> = ({
             <Download className="w-3.5 h-3.5" />
             <span>Export Deliverables</span>
           </button>
+
+          {onSaveProject && (
+            <button
+              onClick={onSaveProject}
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold px-3 py-1.5 rounded-md transition cursor-pointer"
+              title="Save Project to .metardu.json"
+            >
+              <Save className="w-3.5 h-3.5 text-blue-400" />
+              <span>Save Project</span>
+            </button>
+          )}
+
+          {onOpenProjectFile && (
+            <label
+              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold px-3 py-1.5 rounded-md transition cursor-pointer"
+              title="Open .metardu.json Project File"
+            >
+              <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+              <span>Open Project</span>
+              <input
+                type="file"
+                accept=".json,.metardu.json"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const r = new FileReader();
+                  r.onload = (ev) => {
+                    const text = ev.target?.result as string;
+                    if (text) onOpenProjectFile(text);
+                  };
+                  r.readAsText(file);
+                }}
+                className="hidden"
+              />
+            </label>
+          )}
         </div>
       </div>
 
@@ -144,7 +212,7 @@ export const Header: React.FC<HeaderProps> = ({
           }`}
         >
           <Sliders className="w-3.5 h-3.5" />
-          <span>Climate Suitability (MCDA)</span>
+          <span>Settlement Suitability (MCDA)</span>
         </button>
 
         <button
@@ -168,7 +236,7 @@ export const Header: React.FC<HeaderProps> = ({
           }`}
         >
           <Zap className="w-3.5 h-3.5" />
-          <span>Sun King Energy Reach</span>
+          <span>Off-Grid Electrification</span>
         </button>
 
         <button
@@ -192,7 +260,7 @@ export const Header: React.FC<HeaderProps> = ({
           }`}
         >
           <FileText className="w-3.5 h-3.5" />
-          <span>UN-Habitat Planning Atlas</span>
+          <span>Regional Planning Atlas</span>
         </button>
 
         <button
@@ -204,7 +272,7 @@ export const Header: React.FC<HeaderProps> = ({
           }`}
         >
           <MapPin className="w-3.5 h-3.5" />
-          <span>Point Data Grid</span>
+          <span>Attribute Table &amp; Data Grid</span>
         </button>
       </div>
     </header>

@@ -43,7 +43,7 @@ export const FEATURE_CODE_RULES: Record<string, CodeRule> = {
   POLE: { code: "POLE", name: "Utility Pole", category: "utility", layer: "UTIL-POLES", color: "#CA8A04", isClosed: false, lineType: "solid", lineWidth: 1 },
   PIPE: { code: "PIPE", name: "Water Pipeline", category: "utility", layer: "UTIL-PIPELINE", color: "#0284C7", isClosed: false, lineType: "dashed", lineWidth: 1.5 },
 
-  // Settlements & Social Infrastructure (UN-Habitat / Sun King)
+  // Settlements & Social Infrastructure (generic — methods: UN-Habitat/FAO & SE4All refs, see methodology-registry)
   VILL: { code: "VILL", name: "Settlement Cluster", category: "settlement", layer: "UN-SETTLEMENTS", color: "#10B981", isClosed: false, lineType: "solid", lineWidth: 1 },
   SCH: { code: "SCH", name: "School / Education", category: "settlement", layer: "UN-SOCIAL-INFRA", color: "#059669", isClosed: false, lineType: "solid", lineWidth: 2 },
   CLINIC: { code: "CLINIC", name: "Health Center / Clinic", category: "settlement", layer: "UN-HEALTHCARE", color: "#34D399", isClosed: false, lineType: "solid", lineWidth: 2 },

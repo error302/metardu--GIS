@@ -14,7 +14,7 @@ export const HazardAuditPanel: React.FC<HazardAuditPanelProps> = ({ result }) =>
         <div className="flex items-center gap-2">
           <AlertTriangle className="w-5 h-5 text-red-400" />
           <h2 className="text-lg font-bold tracking-tight text-white font-['Plus_Jakarta_Sans']">
-            HAZARD &amp; CLIMATE RISK VULNERABILITY AUDITOR (UN-HABITAT)
+            HAZARD &amp; FLOOD EXPOSURE AUDITOR — GENERIC
           </h2>
         </div>
         <p className="text-xs text-slate-400 mt-1">

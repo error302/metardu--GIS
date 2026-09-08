@@ -119,19 +119,19 @@ export const ExportHubModal: React.FC<ExportHubModalProps> = ({ result, onClose 
             </button>
           </div>
 
-          {/* UN-Habitat Atlas SVG */}
+          {/* Regional Planning Atlas SVG — Generic */}
           <div className="flex items-center justify-between p-3.5 bg-slate-950 border border-slate-800 rounded-xl hover:border-slate-700 transition">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-sky-600/20 text-sky-400 flex items-center justify-center border border-sky-500/30">
                 <Globe className="w-4 h-4" />
               </div>
               <div>
-                <strong className="text-sm text-white block">UN-Habitat Planning Atlas SVG</strong>
-                <span className="text-xs text-slate-400">Executive Decision Atlas with suitability choropleth &amp; hazard exposure.</span>
+                <strong className="text-sm text-white block">Regional Planning Atlas SVG</strong>
+                <span className="text-xs text-slate-400">Executive Decision Atlas — suitability choropleth &amp; hazard exposure (generic).</span>
               </div>
             </div>
             <button
-              onClick={() => downloadFile(generatePlanningAtlasSvg(result), `UN_Habitat_Atlas_${titleClean}.svg`, "image/svg+xml")}
+              onClick={() => downloadFile(generatePlanningAtlasSvg(result), `Regional_Planning_Atlas_${titleClean}.svg`, "image/svg+xml")}
               className="flex items-center gap-1.5 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold px-3 py-1.5 rounded-md transition cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />

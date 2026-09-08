@@ -1,6 +1,6 @@
 /**
- * UN-Habitat Regional GIS Planning Atlas Sheet Vector Composer
- * Generates an executive, publication-ready A3/A4 Planning Atlas for City Leaders and Donors.
+ * Regional Planning Atlas Sheet Vector Composer — Generic
+ * Generates an executive A3/A4 Planning Atlas. Methodology refs: UN-Habitat/FAO suitability frameworks (see methodology-registry.ts).
  */
 
 import { PipelineResult } from "../types/spatial";
@@ -25,12 +25,12 @@ export function generatePlanningAtlasSvg(result: PipelineResult): string {
   <rect width="${width}" height="${height}" fill="#0B0F17"/>
   <rect x="25" y="25" width="${width - 50}" height="${height - 50}" fill="#0F172A" stroke="#1E293B" stroke-width="2"/>
 
-  <!-- UN-Habitat Executive Header -->
+  <!-- Generic Executive Header -->
   <g transform="translate(50, 65)">
     <rect x="0" y="-18" width="6" height="42" fill="#0EA5E9" rx="2"/>
-    <text x="18" y="0" font-size="16" font-weight="800" fill="#F8FAFC" letter-spacing="1.5">UN-HABITAT REGIONAL GIS PLANNING ATLAS</text>
-    <text x="18" y="18" font-size="11" font-weight="500" fill="#94A3B8">CLIMATE-SMART SETTLEMENT SUITABILITY &amp; HAZARD MITIGATION DOSSIER</text>
-    <text x="${width - 120}" y="6" font-size="10" font-family="monospace" fill="#38BDF8" text-anchor="end">PROGRAM: ETHIOPIA &amp; EAST AFRICA</text>
+    <text x="18" y="0" font-size="16" font-weight="800" fill="#F8FAFC" letter-spacing="1.5">REGIONAL GIS PLANNING ATLAS</text>
+    <text x="18" y="18" font-size="11" font-weight="500" fill="#94A3B8">SETTLEMENT SUITABILITY &amp; HAZARD MITIGATION DOSSIER</text>
+    <text x="${width - 120}" y="6" font-size="10" font-family="monospace" fill="#38BDF8" text-anchor="end">METARDU DESKTOP — GENERIC PLANNING TEMPLATE</text>
   </g>
 
   <!-- KPI SUMMARY ROW -->
@@ -120,18 +120,18 @@ export function generatePlanningAtlasSvg(result: PipelineResult): string {
 
       <!-- Signoff Block -->
       <line x1="18" y1="185" x2="180" y2="185" stroke="#475569" stroke-width="1"/>
-      <text x="18" y="200" font-size="8" font-weight="600" fill="#F8FAFC">UN-HABITAT PROGRAMME MANAGER</text>
-      <text x="18" y="212" font-size="7.5" fill="#64748B">Date: ${meta.date} | Nairobi Hub</text>
+      <text x="18" y="200" font-size="8" font-weight="600" fill="#F8FAFC">PROGRAMME MANAGER</text>
+      <text x="18" y="212" font-size="7.5" fill="#64748B">Date: ${meta.date}</text>
 
       <line x1="215" y1="185" x2="375" y2="185" stroke="#475569" stroke-width="1"/>
-      <text x="215" y="200" font-size="8" font-weight="600" fill="#F8FAFC">REGIONAL MUNICIPAL CHIEF PLANNER</text>
+      <text x="215" y="200" font-size="8" font-weight="600" fill="#F8FAFC">MUNICIPAL CHIEF PLANNER</text>
       <text x="215" y="212" font-size="7.5" fill="#64748B">Statutory Endorsement</text>
     </g>
   </g>
 
   <!-- Footer -->
   <g transform="translate(${width / 2}, ${height - 40})" text-anchor="middle">
-    <text font-size="8" font-family="monospace" fill="#64748B">UN-HABITAT &amp; METARDU SPATIAL RESILIENCE ENGINE | AUTONOMOUS GIS STUDIO</text>
+    <text font-size="8" font-family="monospace" fill="#64748B">METARDU DESKTOP | AUTONOMOUS GIS STUDIO — GENERIC PLANNING TEMPLATE</text>
   </g>
 </svg>
 `;

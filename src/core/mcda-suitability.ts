@@ -1,6 +1,7 @@
 /**
- * Climate-Smart Multi-Criteria Suitability Modeler (UN-Habitat MCDA)
- * Dynamically computes settlement development suitability based on slope, road access, and riparian setbacks.
+ * Settlement Suitability (MCDA) — Generic Multi-Criteria Modeler
+ * Computes development suitability via weighted overlay: slope, road access, riparian setbacks, infra.
+ * Reference: UN-Habitat / FAO frameworks (see methodology-registry.ts). Weights are user-parametrized presets.
  */
 
 import { TinMesh, SurveyVector, SuitabilityCell, McdaWeights } from "../types/spatial";

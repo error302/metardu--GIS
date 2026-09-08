@@ -8,16 +8,19 @@ import { HazardAuditPanel } from "./components/HazardAuditPanel";
 import { EnergyPlanningPanel } from "./components/EnergyPlanningPanel";
 import { DeedPlanViewer } from "./components/DeedPlanViewer";
 import { PlanningAtlasViewer } from "./components/PlanningAtlasViewer";
-import { PointDataGrid } from "./components/PointDataGrid";
+import { AttributeTable } from "./components/AttributeTable";
 import { ExportHubModal } from "./components/ExportHubModal";
 import { BENCHMARK_SCENARIOS, BenchmarkScenario } from "./data/sample-surveys";
 import { runAutonomousGisPipeline } from "./core/pipeline";
 import { PipelineResult, SurveyPoint } from "./types/spatial";
+import { transform, crsEpsgFromMetadata, getCRS } from "./core/crs";
+import { createProjectSnapshot, downloadProjectFile, parseProjectFile } from "./core/project";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
   const [selectedScenario, setSelectedScenario] = useState<BenchmarkScenario>(BENCHMARK_SCENARIOS[0]);
   const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(null);
+  const [selectedPointIds, setSelectedPointIds] = useState<string[]>([]);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -73,6 +76,57 @@ export const App: React.FC = () => {
     );
   };
 
+  const handleCrsChange = (newEpsg: number) => {
+    if (!pipelineResult) return;
+    const currentEpsg = crsEpsgFromMetadata(pipelineResult.metadata.crs);
+    if (currentEpsg === newEpsg) return;
+
+    const crsDef = getCRS(newEpsg);
+    const newCrsName = crsDef ? `${crsDef.name} (EPSG: ${crsDef.epsg})` : `EPSG:${newEpsg}`;
+
+    // Reproject all coordinates to target CRS using proj4
+    const reprojectedPoints = pipelineResult.points.map((pt) => {
+      const [newE, newN] = transform(currentEpsg, newEpsg, pt.easting, pt.northing);
+      return {
+        ...pt,
+        easting: Number(newE.toFixed(3)),
+        northing: Number(newN.toFixed(3)),
+      };
+    });
+
+    const updatedMetadata = {
+      ...pipelineResult.metadata,
+      crs: newCrsName,
+    };
+
+    executePipeline({ ...selectedScenario, metadata: updatedMetadata }, reprojectedPoints);
+  };
+
+  const handleSaveProject = () => {
+    if (!pipelineResult) return;
+    const project = createProjectSnapshot(pipelineResult);
+    downloadProjectFile(project);
+  };
+
+  const handleOpenProjectFile = (jsonText: string) => {
+    try {
+      const proj = parseProjectFile(jsonText);
+      executePipeline(
+        {
+          id: proj.metadata.id,
+          title: proj.projectName,
+          badge: "Project File",
+          description: `Loaded project file (${proj.savedAt.split("T")[0]})`,
+          metadata: proj.metadata,
+          points: proj.points,
+        },
+        proj.points
+      );
+    } catch (err: any) {
+      alert(`Could not load project: ${err.message}`);
+    }
+  };
+
   if (!pipelineResult) {
     return (
       <div className="w-screen h-screen bg-[#0B0F17] flex items-center justify-center text-slate-100 font-mono">
@@ -95,6 +149,10 @@ export const App: React.FC = () => {
         onRunPipeline={handleRunPipeline}
         onOpenExport={() => setIsExportOpen(true)}
         totalDurationMs={pipelineResult.totalDurationMs}
+        currentCrs={pipelineResult.metadata.crs}
+        onCrsChange={handleCrsChange}
+        onSaveProject={handleSaveProject}
+        onOpenProjectFile={handleOpenProjectFile}
       />
 
       {/* Real-time Sub-Second Pipeline Telemetry Bar */}
@@ -105,7 +163,17 @@ export const App: React.FC = () => {
 
       {/* Main Workspace Tabs */}
       <main className="flex-1 relative overflow-hidden">
-        {activeTab === "canvas2d" && <MapCanvas2D result={pipelineResult} />}
+        {activeTab === "canvas2d" && (
+          <MapCanvas2D
+            result={pipelineResult}
+            selectedPointIds={selectedPointIds}
+            onSelectPoint={(id) => {
+              setSelectedPointIds((prev) =>
+                prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+              );
+            }}
+          />
+        )}
         {activeTab === "terrain3d" && <TerrainViewer3D result={pipelineResult} />}
         {activeTab === "mcda" && (
           <McdaSuitabilityPanel
@@ -116,12 +184,21 @@ export const App: React.FC = () => {
           />
         )}
         {activeTab === "hazards" && <HazardAuditPanel result={pipelineResult} />}
-        {activeTab === "energy" && <EnergyPlanningPanel result={pipelineResult} />}
+        {activeTab === "energy" && (
+          <EnergyPlanningPanel
+            result={pipelineResult}
+            onUpdateClusters={(newClusters) =>
+              setPipelineResult((prev) => (prev ? { ...prev, energyClusters: newClusters } : prev))
+            }
+          />
+        )}
         {activeTab === "deedplan" && <DeedPlanViewer result={pipelineResult} />}
         {activeTab === "atlas" && <PlanningAtlasViewer result={pipelineResult} />}
         {activeTab === "datagrid" && (
-          <PointDataGrid
+          <AttributeTable
             result={pipelineResult}
+            selectedPointIds={selectedPointIds}
+            onSelectPoints={setSelectedPointIds}
             onUploadCustomSurvey={handleUploadCustomSurvey}
             onUpdatePoints={(pts) => executePipeline(selectedScenario, pts)}
           />

@@ -10,16 +10,26 @@ import {
   Sun,
   Moon,
   Globe,
+  Wrench,
 } from "lucide-react";
 import { PipelineResult } from "../types/spatial";
+import { crsEpsgFromMetadata, toWGS84 } from "../core/crs";
+import { DEFAULT_LAYERS, LayerItem } from "../core/layer-store";
+import { LayerPanel } from "./LayerPanel";
+import { ToolboxPanel } from "./ToolboxPanel";
 
 interface MapCanvas2DProps {
   result: PipelineResult;
+  selectedPointIds?: string[];
+  onSelectPoint?: (id: string) => void;
 }
 
 export type BasemapMode = "dark" | "satellite" | "viirs" | "cad";
 
-export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
+export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
+  result,
+  selectedPointIds = [],
+}) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   // Viewport transformation
@@ -29,24 +39,47 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [cursorCoord, setCursorCoord] = useState({ easting: 0, northing: 0, elevation: 0 });
 
+  const activeEpsg = useMemo(() => crsEpsgFromMetadata(result.metadata.crs), [result.metadata.crs]);
+
+  const [cursorLon, cursorLat] = useMemo(() => {
+    if (!cursorCoord.easting && !cursorCoord.northing) return [0, 0];
+    try {
+      return toWGS84(activeEpsg, cursorCoord.easting, cursorCoord.northing);
+    } catch {
+      return [0, 0];
+    }
+  }, [activeEpsg, cursorCoord.easting, cursorCoord.northing]);
+
   // Basemap & Layer toggles
   const [basemap, setBasemap] = useState<BasemapMode>("dark");
-  const [layers, setLayers] = useState({
-    boundary: true,
-    bearings: true,
-    beacons: true,
-    roads: true,
-    roadBuffer: true,
-    riparianBuffer: true,
-    rivers: true,
-    tin: false,
-    contours: true,
-    suitability: false,
-    hazards: true,
-    energy: true,
-  });
+  const [layerItems, setLayerItems] = useState<LayerItem[]>(DEFAULT_LAYERS);
+
+  const layerMap = useMemo(() => {
+    const map: Record<string, LayerItem> = {};
+    for (const l of layerItems) map[l.id] = l;
+    return map;
+  }, [layerItems]);
+
+  const layers = useMemo(
+    () => ({
+      boundary: layerMap.boundary?.visible ?? true,
+      bearings: layerMap.bearings?.visible ?? true,
+      beacons: layerMap.beacons?.visible ?? true,
+      roads: layerMap.roads?.visible ?? true,
+      roadBuffer: layerMap.roadBuffer?.visible ?? true,
+      riparianBuffer: layerMap.riparianBuffer?.visible ?? true,
+      rivers: layerMap.rivers?.visible ?? true,
+      tin: layerMap.tin?.visible ?? false,
+      contours: layerMap.contours?.visible ?? true,
+      suitability: layerMap.suitability?.visible ?? false,
+      hazards: layerMap.hazards?.visible ?? true,
+      energy: layerMap.energy?.visible ?? true,
+    }),
+    [layerMap]
+  );
 
   const [showLayerPanel, setShowLayerPanel] = useState(false);
+  const [showToolbox, setShowToolbox] = useState(false);
 
   // Calculate project bounds
   const bounds = useMemo(() => {
@@ -122,7 +155,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
       ctx.fillStyle = "#064E3B22";
       ctx.fillRect(0, 0, w, h);
     } else if (basemap === "viirs") {
-      // NASA VIIRS Black Marble nocturnal simulation
+      // Night Lights Overlay (VIIRS-inspired, generic ref — see methodology-registry)
       ctx.fillStyle = "#030712";
       ctx.fillRect(0, 0, w, h);
       // Soft ambient light glow
@@ -352,7 +385,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
       }
     }
 
-    // 10. Sun King Energy Clusters
+    // 10. Electrification Clusters (generic)
     if (layers.energy) {
       for (const ec of result.energyClusters) {
         const sx = toScreenX(ec.centroid[0]);
@@ -371,7 +404,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
 
         ctx.fillStyle = "#FDE047";
         ctx.font = "bold 9px monospace";
-        ctx.fillText(`SOLAR: ${ec.recommendedType} (${ec.householdCount} HH)`, sx + r + 4, sy);
+        ctx.fillText(`${ec.recommendedType}: ${ec.recommendedSolarKw}kWp (${ec.householdCount} HH)`, sx + r + 4, sy);
       }
     }
 
@@ -381,8 +414,19 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
         const sx = toScreenX(pt.easting);
         const sy = toScreenY(pt.northing);
 
+        const isSelected = selectedPointIds?.includes(pt.id);
+        if (isSelected) {
+          ctx.beginPath();
+          ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
+          ctx.fillStyle = "#FACC1533";
+          ctx.fill();
+          ctx.strokeStyle = "#FACC15";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
         const isBnd = pt.category === "boundary";
-        ctx.fillStyle = isBnd ? "#EF4444" : "#3B82F6";
+        ctx.fillStyle = isSelected ? "#FACC15" : isBnd ? "#EF4444" : "#3B82F6";
         ctx.beginPath();
         ctx.arc(sx, sy, isBnd ? 4.5 : 3, 0, 2 * Math.PI);
         ctx.fill();
@@ -391,8 +435,8 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
         ctx.stroke();
 
         // Label
-        ctx.fillStyle = basemap === "cad" ? "#0F172A" : "#F1F5F9";
-        ctx.font = "8px sans-serif";
+        ctx.fillStyle = isSelected ? "#FACC15" : basemap === "cad" ? "#0F172A" : "#F1F5F9";
+        ctx.font = isSelected ? "bold 9px monospace" : "8px sans-serif";
         ctx.fillText(pt.id, sx + 6, sy - 4);
       }
     }
@@ -554,9 +598,9 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
             className={`px-2.5 py-1 text-xs font-semibold rounded transition cursor-pointer ${
               basemap === "viirs" ? "bg-amber-600 text-white" : "text-slate-400 hover:text-white"
             }`}
-            title="NASA VIIRS Night-Time Lights (Black Marble)"
+            title="Night Lights Overlay (VIIRS-inspired — generic reference)"
           >
-            NASA VIIRS NTL
+            Night Lights
           </button>
           <button
             onClick={() => setBasemap("cad")}
@@ -602,43 +646,54 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({ result }) => {
           >
             <Layers className="w-4 h-4" />
           </button>
+          <button
+            onClick={() => setShowToolbox((v) => !v)}
+            className={`p-1.5 rounded transition cursor-pointer ${
+              showToolbox ? "bg-blue-600/30 text-blue-400" : "text-slate-300 hover:text-white hover:bg-slate-800"
+            }`}
+            title="Geoprocessing Toolbox (QGIS/ArcGIS Processing)"
+          >
+            <Wrench className="w-4 h-4" />
+          </button>
         </div>
       </div>
 
-      {/* Layer Visibility Drawer */}
+      {/* Dynamic Layer Manager Panel */}
       {showLayerPanel && (
-        <div className="absolute top-24 left-4 w-64 bg-slate-900/95 backdrop-blur border border-slate-800 rounded-lg p-3.5 shadow-2xl z-20 text-xs font-['Plus_Jakarta_Sans']">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-2.5">
-            <span className="font-bold text-white tracking-wide">VECTOR LAYERS</span>
-            <span className="text-[10px] text-slate-400 font-mono">CADASTRE &amp; GIS</span>
-          </div>
+        <div className="absolute top-20 left-4 z-30 shadow-2xl">
+          <LayerPanel
+            layers={layerItems}
+            onChangeLayers={setLayerItems}
+            onZoomToLayer={() => handleFitBounds()}
+            onClose={() => setShowLayerPanel(false)}
+          />
+        </div>
+      )}
 
-          <div className="space-y-1.5 max-h-80 overflow-y-auto pr-1">
-            {Object.entries(layers).map(([key, enabled]) => (
-              <label
-                key={key}
-                className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-slate-800/60 cursor-pointer text-slate-300 select-none"
-              >
-                <span className="capitalize">{key.replace(/([A-Z])/g, " $1")}</span>
-                <input
-                  type="checkbox"
-                  checked={enabled}
-                  onChange={(e) => setLayers((prev) => ({ ...prev, [key]: e.target.checked }))}
-                  className="rounded border-slate-700 text-blue-600 focus:ring-0 cursor-pointer"
-                />
-              </label>
-            ))}
-          </div>
+      {/* Geoprocessing Toolbox Panel */}
+      {showToolbox && (
+        <div className="absolute top-20 right-4 z-30 shadow-2xl">
+          <ToolboxPanel
+            pipeline={result}
+            onClose={() => setShowToolbox(false)}
+          />
         </div>
       )}
 
       {/* Bottom Live Cursor Coordinate Bar */}
-      <div className="absolute bottom-2 right-4 bg-slate-900/90 backdrop-blur border border-slate-800 px-3.5 py-1.5 rounded-md text-[11px] font-mono text-slate-300 shadow-xl flex items-center gap-4 z-10">
+      <div className="absolute bottom-2 right-4 bg-slate-900/90 backdrop-blur border border-slate-800 px-3.5 py-1.5 rounded-md text-[11px] font-mono text-slate-300 shadow-xl flex items-center gap-3 z-10">
+        <span className="text-blue-400 font-bold">EPSG:{activeEpsg}</span>
+        <span className="text-slate-600">|</span>
         <span>E: <strong className="text-white">{cursorCoord.easting.toLocaleString()}m</strong></span>
         <span>N: <strong className="text-white">{cursorCoord.northing.toLocaleString()}m</strong></span>
-        <span>H: <strong className="text-blue-400">{cursorCoord.elevation.toFixed(2)}m MSL</strong></span>
-        <span className="text-slate-500">|</span>
-        <span className="text-slate-400 font-sans text-[10px]">{result.metadata.crs}</span>
+        <span>H: <strong className="text-emerald-400">{cursorCoord.elevation.toFixed(2)}m MSL</strong></span>
+        {cursorLat !== 0 && (
+          <>
+            <span className="text-slate-600">|</span>
+            <span>Lat: <strong className="text-amber-400">{cursorLat.toFixed(5)}°</strong></span>
+            <span>Lon: <strong className="text-amber-400">{cursorLon.toFixed(5)}°</strong></span>
+          </>
+        )}
       </div>
     </div>
   );

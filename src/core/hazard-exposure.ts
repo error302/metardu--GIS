@@ -1,6 +1,6 @@
 /**
- * Hazard & Climate Risk Vulnerability Auditor (UN-Habitat)
- * Traces low-point depression sinks, flood inundation zones, and audits exposed infrastructure.
+ * Hazard & Flood Exposure Auditor — Generic Vulnerability Screening
+ * Detects depression sinks and audits exposed assets. Methodology ref: UNDRR generic screening (see methodology-registry.ts).
  */
 
 import { TinMesh, SurveyPoint, HazardSink, ExposedAsset } from "../types/spatial";
