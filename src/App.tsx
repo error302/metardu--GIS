@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Header, ActiveTab } from "./components/Header";
-import { PipelineTelemetryBar } from "./components/PipelineTelemetry";
+import { StatusBar, CursorReadout } from "./components/StatusBar";
 import { MapCanvas2D } from "./components/MapCanvas2D";
 import { TerrainViewer3D } from "./components/TerrainViewer3D";
 import { McdaSuitabilityPanel } from "./components/McdaSuitabilityPanel";
@@ -23,6 +23,10 @@ export const App: React.FC = () => {
   const [selectedPointIds, setSelectedPointIds] = useState<string[]>([]);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Live view state reported by the 2D canvas into the global status bar
+  const [cursor, setCursor] = useState<CursorReadout | null>(null);
+  const [scaleDenominator, setScaleDenominator] = useState(1000);
 
   // Execute pipeline for scenario
   const executePipeline = async (scenario: BenchmarkScenario, customPoints?: SurveyPoint[]) => {
@@ -127,20 +131,26 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleCursorReadout = useCallback((c: CursorReadout | null) => setCursor(c), []);
+  const handleScaleChange = useCallback((s: number) => setScaleDenominator(s), []);
+
   if (!pipelineResult) {
     return (
-      <div className="w-screen h-screen bg-[#0B0F17] flex items-center justify-center text-slate-100 font-mono">
+      <div className="w-screen h-screen bg-app flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs text-slate-400">INITIALIZING METARDU AUTONOMOUS GIS WORKSTATION...</span>
+          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <span className="ui-label">Initializing workspace</span>
         </div>
       </div>
     );
   }
 
+  const activeEpsg = crsEpsgFromMetadata(pipelineResult.metadata.crs);
+  const activeCrsDef = getCRS(activeEpsg);
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#0B0F17] text-slate-100 overflow-hidden font-['Plus_Jakarta_Sans'] select-none">
-      {/* Top Application Header */}
+    <div className="flex flex-col h-screen w-screen bg-app text-ink overflow-hidden">
+      {/* Top application chrome */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -155,14 +165,13 @@ export const App: React.FC = () => {
         onOpenProjectFile={handleOpenProjectFile}
       />
 
-      {/* Real-time Sub-Second Pipeline Telemetry Bar */}
-      <PipelineTelemetryBar
-        telemetries={pipelineResult.telemetries}
-        totalDurationMs={pipelineResult.totalDurationMs}
-      />
-
-      {/* Main Workspace Tabs */}
-      <main className="flex-1 relative overflow-hidden">
+      {/* Workspace */}
+      <main className="flex-1 min-h-0 relative overflow-hidden">
+        {isLoading && (
+          <div className="absolute inset-x-0 top-0 h-0.5 z-50 overflow-hidden">
+            <div className="h-full w-1/3 bg-accent animate-[pipeline_0.9s_ease-in-out_infinite]" />
+          </div>
+        )}
         {activeTab === "canvas2d" && (
           <MapCanvas2D
             result={pipelineResult}
@@ -172,6 +181,8 @@ export const App: React.FC = () => {
                 prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
               );
             }}
+            onCursorReadout={handleCursorReadout}
+            onScaleChange={handleScaleChange}
           />
         )}
         {activeTab === "terrain3d" && <TerrainViewer3D result={pipelineResult} />}
@@ -205,7 +216,20 @@ export const App: React.FC = () => {
         )}
       </main>
 
-      {/* 1-Click Export Hub Modal */}
+      {/* Persistent instrument strip */}
+      <StatusBar
+        cursor={activeTab === "canvas2d" ? cursor : null}
+        scaleDenominator={scaleDenominator}
+        epsg={activeEpsg}
+        crsName={activeCrsDef?.name ?? pipelineResult.metadata.crs}
+        featureCount={pipelineResult.points.length}
+        selectedCount={selectedPointIds.length}
+        scenarioTitle={pipelineResult.metadata.title}
+        telemetries={pipelineResult.telemetries}
+        totalDurationMs={pipelineResult.totalDurationMs}
+      />
+
+      {/* Export hub */}
       {isExportOpen && (
         <ExportHubModal result={pipelineResult} onClose={() => setIsExportOpen(false)} />
       )}

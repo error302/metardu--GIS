@@ -87,21 +87,21 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
   };
 
   return (
-    <div className="w-80 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-xl shadow-2xl flex flex-col font-['Plus_Jakarta_Sans'] text-xs select-none overflow-hidden max-h-[85vh]">
+    <div className="w-80 bg-panel border border-line-strong rounded-[4px] shadow-2xl flex flex-col text-xs overflow-hidden max-h-[85vh]">
       {/* Header */}
-      <div className="flex items-center justify-between px-3.5 py-2.5 bg-slate-950 border-b border-slate-800">
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-line">
         <div className="flex items-center gap-2">
-          <Layers className="w-4 h-4 text-blue-400" />
-          <span className="font-bold text-white tracking-wide">LAYERS &amp; SYMBOLOGY</span>
+          <Layers className="w-4 h-4 text-ink-3" />
+          <span className="ui-label">Layers &amp; Symbology</span>
         </div>
         <div className="flex items-center gap-1">
-          <span className="text-[10px] text-slate-500 font-mono">
+          <span className="text-[10px] tnum text-ink-3">
             {layers.filter((l) => l.visible).length}/{layers.length} active
           </span>
           {onClose && (
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-white p-1 rounded transition cursor-pointer"
+              className="text-ink-3 hover:text-ink p-1 rounded transition cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -110,7 +110,7 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
       </div>
 
       {/* Layer List (Ordered by z-index top to bottom) */}
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60 p-1 space-y-0.5">
+      <div className="flex-1 overflow-y-auto divide-y divide-line/60 p-1 space-y-0.5">
         {layers.map((layer, index) => {
           const isSelected = selectedLayerId === layer.id;
           const defaultColor = layer.symbology.defaultStyle.color || "#3B82F6";
@@ -119,10 +119,10 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
             <div
               key={layer.id}
               onClick={() => setSelectedLayerId(layer.id)}
-              className={`p-2 rounded-lg transition flex flex-col gap-1.5 cursor-pointer ${
+              className={`p-2 rounded-[3px] transition flex flex-col gap-1.5 cursor-pointer ${
                 isSelected
-                  ? "bg-slate-800/80 border border-slate-700"
-                  : "hover:bg-slate-800/40 border border-transparent"
+                  ? "bg-raised border border-line-strong"
+                  : "hover:bg-raised/50 border border-transparent"
               }`}
             >
               {/* Row 1: Visibility, Color Swatch, Layer Name, Reorder Controls */}
@@ -136,8 +136,8 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                     }}
                     className={`p-1 rounded transition cursor-pointer ${
                       layer.visible
-                        ? "text-blue-400 hover:text-blue-300"
-                        : "text-slate-600 hover:text-slate-400"
+                        ? "text-ink-2 hover:text-ink"
+                        : "text-ink-3/50 hover:text-ink-3"
                     }`}
                     title={layer.visible ? "Hide Layer" : "Show Layer"}
                   >
@@ -157,8 +157,8 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
 
                   {/* Layer Name */}
                   <span
-                    className={`font-semibold truncate text-[11px] ${
-                      layer.visible ? "text-slate-200" : "text-slate-500 line-through"
+                    className={`font-medium truncate text-[11px] ${
+                      layer.visible ? "text-ink" : "text-ink-3 line-through"
                     }`}
                   >
                     {layer.name}
@@ -173,7 +173,7 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                       e.stopPropagation();
                       handleMoveUp(index);
                     }}
-                    className="p-1 text-slate-400 hover:text-white disabled:opacity-20 transition cursor-pointer"
+                    className="p-1 text-ink-3 hover:text-ink disabled:opacity-20 transition cursor-pointer"
                     title="Move Layer Up"
                   >
                     <ChevronUp className="w-3 h-3" />
@@ -185,7 +185,7 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                       e.stopPropagation();
                       handleMoveDown(index);
                     }}
-                    className="p-1 text-slate-400 hover:text-white disabled:opacity-20 transition cursor-pointer"
+                    className="p-1 text-ink-3 hover:text-ink disabled:opacity-20 transition cursor-pointer"
                     title="Move Layer Down"
                   >
                     <ChevronDown className="w-3 h-3" />
@@ -196,7 +196,7 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                       e.stopPropagation();
                       setEditingSymbologyLayer(layer);
                     }}
-                    className="p-1 text-slate-400 hover:text-blue-400 transition cursor-pointer"
+                    className="p-1 text-ink-3 hover:text-accent transition cursor-pointer"
                     title="Layer Symbology &amp; Style"
                   >
                     <Palette className="w-3 h-3" />
@@ -208,7 +208,7 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
               {layer.visible && layer.symbology.type === "categorized" && layer.symbology.categorizedRules && (
                 <div className="pl-8 pr-1 py-1 space-y-1">
                   {layer.symbology.categorizedRules.map((rule) => (
-                    <div key={rule.value} className="flex items-center gap-2 text-[10px] text-slate-400">
+                    <div key={rule.value} className="flex items-center gap-2 text-[10px] text-ink-3">
                       <span
                         style={{ backgroundColor: rule.style.color }}
                         className="w-2.5 h-2.5 rounded-full inline-block shrink-0 border border-white/20"
@@ -221,9 +221,9 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
 
               {/* Row 2 (When layer selected): Opacity Slider & Z-Index */}
               {isSelected && (
-                <div className="flex items-center justify-between gap-3 pt-1 border-t border-slate-700/50 text-[10px] text-slate-400 pl-7">
+                <div className="flex items-center justify-between gap-3 pt-1 border-t border-line text-[10px] text-ink-3 pl-7">
                   <div className="flex items-center gap-2 flex-1">
-                    <span className="shrink-0">Opacity:</span>
+                    <span className="shrink-0">Opacity</span>
                     <input
                       type="range"
                       min="0"
@@ -231,9 +231,9 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                       step="0.05"
                       value={layer.opacity}
                       onChange={(e) => handleOpacityChange(layer.id, parseFloat(e.target.value))}
-                      className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                      className="w-full h-1 bg-line rounded-full appearance-none cursor-pointer accent-[#d9a441]"
                     />
-                    <span className="font-mono text-white w-7 text-right">
+                    <span className="tnum text-ink w-7 text-right">
                       {Math.round(layer.opacity * 100)}%
                     </span>
                   </div>
@@ -244,7 +244,7 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                         e.stopPropagation();
                         onZoomToLayer(layer.id);
                       }}
-                      className="p-1 text-slate-400 hover:text-white transition cursor-pointer"
+                      className="p-1 text-ink-3 hover:text-ink transition cursor-pointer"
                       title="Zoom to layer extents"
                     >
                       <Maximize2 className="w-3 h-3" />
@@ -260,24 +260,24 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
       {/* ── Symbology Styling Modal ── */}
       {editingSymbologyLayer && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 max-w-sm w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="bg-panel border border-line-strong rounded-[4px] max-w-sm w-full shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-line px-4 py-3">
               <div>
-                <h4 className="font-bold text-white text-sm">Layer Symbology</h4>
-                <p className="text-[11px] text-slate-400">{editingSymbologyLayer.name}</p>
+                <h4 className="font-semibold text-ink text-[13px]">Layer Symbology</h4>
+                <p className="text-[11px] text-ink-3">{editingSymbologyLayer.name}</p>
               </div>
               <button
                 onClick={() => setEditingSymbologyLayer(null)}
-                className="text-slate-400 hover:text-white"
+                className="text-ink-3 hover:text-ink"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="space-y-3 text-xs">
+            <div className="p-4 space-y-4 text-xs">
               {/* Primary Color Picker */}
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Primary Color</label>
+                <label className="block text-ink-2 font-medium mb-1.5">Primary color</label>
                 <div className="flex items-center gap-3">
                   <input
                     type="color"
@@ -288,9 +288,9 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                         strokeColor: e.target.value,
                       })
                     }
-                    className="w-8 h-8 rounded border border-slate-700 bg-slate-950 cursor-pointer"
+                    className="w-8 h-8 rounded-[3px] border border-line-strong bg-sunken cursor-pointer"
                   />
-                  <span className="font-mono text-white">
+                  <span className="tnum text-ink">
                     {editingSymbologyLayer.symbology.defaultStyle.color}
                   </span>
                 </div>
@@ -298,9 +298,9 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
 
               {/* Stroke Width Slider */}
               <div>
-                <div className="flex items-center justify-between text-slate-300 font-semibold mb-1">
-                  <span>Stroke Width</span>
-                  <span className="font-mono text-white">
+                <div className="flex items-center justify-between text-ink-2 font-medium mb-1.5">
+                  <span>Stroke width</span>
+                  <span className="tnum text-ink">
                     {editingSymbologyLayer.symbology.defaultStyle.strokeWidth || 1}px
                   </span>
                 </div>
@@ -315,16 +315,16 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                       strokeWidth: parseFloat(e.target.value),
                     })
                   }
-                  className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                  className="w-full h-1 bg-line rounded-full appearance-none cursor-pointer accent-[#d9a441]"
                 />
               </div>
 
               {/* Fill Opacity Slider (if layer has fill) */}
               {editingSymbologyLayer.symbology.defaultStyle.fillOpacity !== undefined && (
                 <div>
-                  <div className="flex items-center justify-between text-slate-300 font-semibold mb-1">
-                    <span>Fill Opacity</span>
-                    <span className="font-mono text-white">
+                  <div className="flex items-center justify-between text-ink-2 font-medium mb-1.5">
+                    <span>Fill opacity</span>
+                    <span className="tnum text-ink">
                       {Math.round((editingSymbologyLayer.symbology.defaultStyle.fillOpacity || 0) * 100)}%
                     </span>
                   </div>
@@ -339,16 +339,16 @@ export const LayerPanel: React.FC<LayerPanelProps> = ({
                         fillOpacity: parseFloat(e.target.value),
                       })
                     }
-                    className="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    className="w-full h-1 bg-line rounded-full appearance-none cursor-pointer accent-[#d9a441]"
                   />
                 </div>
               )}
             </div>
 
-            <div className="pt-2 border-t border-slate-800 flex justify-end">
+            <div className="px-4 py-3 border-t border-line flex justify-end">
               <button
                 onClick={() => setEditingSymbologyLayer(null)}
-                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-xs font-semibold shadow transition cursor-pointer"
+                className="ui-btn-accent"
               >
                 Done
               </button>

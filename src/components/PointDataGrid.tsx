@@ -56,27 +56,27 @@ export const PointDataGrid: React.FC<PointDataGridProps> = ({
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-4 text-slate-100 h-[calc(100vh-125px)] flex flex-col">
+    <div className="p-6 max-w-6xl mx-auto space-y-4 text-ink h-full flex flex-col">
       {/* Top Toolbar */}
-      <div className="flex items-center justify-between gap-4 bg-slate-900 border border-slate-800 p-3 rounded-xl">
+      <div className="flex items-center justify-between gap-4 bg-panel border border-line p-3 rounded-[4px]">
         <div className="flex items-center gap-3 flex-1">
           <div className="relative flex-1 max-w-xs">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-ink-2" />
             <input
               type="text"
               placeholder="Search station, code, or description..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              className="w-full bg-sunken border border-line rounded-[3px] pl-9 pr-3 py-1.5 text-xs text-ink placeholder-ink-3 focus:outline-none focus:border-accent"
             />
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5 text-xs text-ink-2">
             <Filter className="w-3.5 h-3.5" />
             <select
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
-              className="bg-slate-950 border border-slate-800 rounded-md px-2.5 py-1.5 text-xs text-white focus:outline-none cursor-pointer"
+              className="bg-sunken border border-line rounded-[3px] px-2.5 py-1.5 text-xs text-ink focus:outline-none cursor-pointer"
             >
               <option value="all">All Categories ({result.points.length})</option>
               <option value="boundary">Boundary Beacons</option>
@@ -91,7 +91,7 @@ export const PointDataGrid: React.FC<PointDataGridProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition">
+          <label className="flex items-center gap-1.5 bg-raised hover:bg-raised text-ink border border-line-strong px-3 py-1.5 rounded-[3px] text-xs font-semibold cursor-pointer transition">
             <Upload className="w-3.5 h-3.5" />
             <span>Upload CSV / GSI</span>
             <input type="file" accept=".csv,.txt,.gsi,.geojson" onChange={handleFileUpload} className="hidden" />
@@ -99,7 +99,7 @@ export const PointDataGrid: React.FC<PointDataGridProps> = ({
 
           <button
             onClick={handleExportCsv}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition shadow-md shadow-blue-500/20"
+            className="flex items-center gap-1.5 bg-accent hover:bg-accent-hover text-ink px-3 py-1.5 rounded-[3px] text-xs font-semibold cursor-pointer transition shadow-md shadow"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export CSV</span>
@@ -108,10 +108,10 @@ export const PointDataGrid: React.FC<PointDataGridProps> = ({
       </div>
 
       {/* Points Data Table */}
-      <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden flex flex-col">
+      <div className="flex-1 bg-panel border border-line rounded-[4px] overflow-hidden flex flex-col">
         <div className="overflow-y-auto flex-1">
           <table className="w-full text-left text-xs font-mono">
-            <thead className="bg-slate-950 text-slate-400 border-b border-slate-800 font-semibold sticky top-0 z-10">
+            <thead className="bg-sunken text-ink-2 border-b border-line font-semibold sticky top-0 z-10">
               <tr>
                 <th className="p-3">Station ID</th>
                 <th className="p-3">Easting (m)</th>
@@ -124,25 +124,25 @@ export const PointDataGrid: React.FC<PointDataGridProps> = ({
                 <th className="p-3">Description</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800 text-slate-300">
+            <tbody className="divide-y divide-line text-ink-2">
               {filteredPoints.map((p) => (
-                <tr key={p.id} className="hover:bg-slate-800/50">
-                  <td className="p-3 font-bold text-white flex items-center gap-1.5 font-sans">
-                    <MapPin className="w-3 h-3 text-blue-400" />
+                <tr key={p.id} className="hover:bg-raised/50">
+                  <td className="p-3 font-bold text-ink flex items-center gap-1.5 font-sans">
+                    <MapPin className="w-3 h-3 text-dt-blue" />
                     <span>{p.id}</span>
                   </td>
                   <td className="p-3">{p.easting.toLocaleString()}</td>
                   <td className="p-3">{p.northing.toLocaleString()}</td>
-                  <td className="p-3 text-emerald-400 font-bold">{p.elevation.toFixed(2)}m</td>
-                  <td className="p-3 text-slate-400">{(p.ellipsoidHeight || p.elevation).toFixed(2)}m</td>
-                  <td className="p-3 text-slate-400">{p.geoidN ? `${p.geoidN}m` : "-18.5m"}</td>
+                  <td className="p-3 text-dt-green font-bold">{p.elevation.toFixed(2)}m</td>
+                  <td className="p-3 text-ink-2">{(p.ellipsoidHeight || p.elevation).toFixed(2)}m</td>
+                  <td className="p-3 text-ink-2">{p.geoidN ? `${p.geoidN}m` : "-18.5m"}</td>
                   <td className="p-3 font-sans">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 border border-slate-700 text-white">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-raised border border-line-strong text-ink">
                       {p.rawCode}
                     </span>
                   </td>
-                  <td className="p-3 capitalize font-sans text-slate-400">{p.category}</td>
-                  <td className="p-3 font-sans text-slate-400">{p.description}</td>
+                  <td className="p-3 capitalize font-sans text-ink-2">{p.category}</td>
+                  <td className="p-3 font-sans text-ink-2">{p.description}</td>
                 </tr>
               ))}
             </tbody>

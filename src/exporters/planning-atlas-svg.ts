@@ -1,6 +1,7 @@
 /**
- * Regional Planning Atlas Sheet Vector Composer — Generic
- * Generates an executive A3/A4 Planning Atlas. Methodology refs: UN-Habitat/FAO suitability frameworks (see methodology-registry.ts).
+ * Regional Planning Atlas Sheet Vector Composer — print-first A3 landscape.
+ * All figures derived from computed pipeline results; no fabricated indicators.
+ * Methodology refs: see methodology-registry.ts (suitability frameworks).
  */
 
 import { PipelineResult } from "../types/spatial";
@@ -9,129 +10,227 @@ export function generatePlanningAtlasSvg(result: PipelineResult): string {
   const width = 1200;
   const height = 850;
   const meta = result.metadata;
+  const b = result.boundary;
 
+  const totalCells = result.suitability.length || 1;
   const optimalCount = result.suitability.filter((c) => c.category === "optimal").length;
   const suitableCount = result.suitability.filter((c) => c.category === "suitable").length;
-  const hazardCount = result.suitability.filter((c) => c.category === "hazard" || c.category === "restricted").length;
-  const totalCells = result.suitability.length || 1;
+  const moderateCount = result.suitability.filter((c) => c.category === "moderate").length;
+  const restrictedCount = result.suitability.filter((c) => c.category === "restricted").length;
+  const hazardCount = result.suitability.filter((c) => c.category === "hazard").length;
 
   const optimalPct = Math.round((optimalCount / totalCells) * 100);
   const suitablePct = Math.round((suitableCount / totalCells) * 100);
+  const moderatePct = Math.round((moderateCount / totalCells) * 100);
+  const restrictedPct = Math.round((restrictedCount / totalCells) * 100);
   const hazardPct = Math.round((hazardCount / totalCells) * 100);
 
+  const areaHa = b?.areaHa ?? 0;
+  const buildableHa = ((optimalPct + suitablePct) / 100 * areaHa).toFixed(2);
+  const totalHh = result.energyClusters.reduce((s, c) => s + c.householdCount, 0);
+  const totalCapex = result.energyClusters.reduce((s, c) => s + c.capexEstimateUsd, 0);
+
+  /* ---- Map projection for the choropleth (spatially truthful) ---- */
+  const mapLeft = 30;
+  const mapTop = 210;
+  const mapW = 640;
+  const mapH = 400;
+
+  // Bounds from suitability cells (they blanket the parcel extent)
+  let minE = Infinity, maxE = -Infinity, minN = Infinity, maxN = -Infinity;
+  for (const c of result.suitability) {
+    if (c.x < minE) minE = c.x;
+    if (c.x > maxE) maxE = c.x;
+    if (c.y < minN) minN = c.y;
+    if (c.y > maxN) maxN = c.y;
+  }
+  if (!isFinite(minE)) { minE = 0; maxE = 100; minN = 0; maxN = 100; }
+  const spanE = maxE - minE || 1;
+  const spanN = maxN - minN || 1;
+  // Cell footprint in world units (regular grid assumed)
+  const cellW = spanE / Math.sqrt(totalCells);
+  const cellH = spanN / Math.sqrt(totalCells);
+  const projX = (e: number) => mapLeft + ((e - minE) / spanE) * mapW;
+  const projY = (n: number) => mapTop + mapH - ((n - minN) / spanN) * mapH;
+  const cellPx = Math.max(2, (mapW / spanE) * cellW);
+
+  // RdYlGn-derived suitability ramp (ColorBrewer), print-safe
+  const classFill: Record<string, string> = {
+    optimal: "#4d9a51",
+    suitable: "#a3c95a",
+    moderate: "#f2c257",
+    restricted: "#e08b52",
+    hazard: "#c85a4f",
+  };
+
+  // Boundary path over the choropleth
+  let boundaryPath = "";
+  if (b && b.points.length >= 3) {
+    boundaryPath = b.points
+      .map((p, i) => `${i === 0 ? "M" : "L"} ${projX(p.easting).toFixed(1)} ${projY(p.northing).toFixed(1)}`)
+      .join(" ") + " Z";
+  }
+
+  const kpiY = 118;
+  const kpi = (x: number, w: number, label: string, value: string, sub: string) => `
+    <rect x="${x}" y="${kpiY}" width="${w}" height="58" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1"/>
+    <line x1="${x}" y1="${kpiY}" x2="${x}" y2="${kpiY + 58}" stroke="#0F172A" stroke-width="2.5"/>
+    <text x="${x + 14}" y="${kpiY + 18}" font-size="8" font-weight="700" fill="#64748B" letter-spacing="1">${label}</text>
+    <text x="${x + 14}" y="${kpiY + 42}" font-size="20" font-weight="700" fill="#0F172A" font-family="monospace">${value}</text>
+    <text x="${x + 14 + value.length * 12}" y="${kpiY + 42}" font-size="9" fill="#64748B">${sub}</text>
+  `;
+
   return `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" style="background-color: #0F172A; font-family: 'Plus Jakarta Sans', Arial, sans-serif;">
-  <!-- Dark Executive Background & Grid -->
-  <rect width="${width}" height="${height}" fill="#0B0F17"/>
-  <rect x="25" y="25" width="${width - 50}" height="${height - 50}" fill="#0F172A" stroke="#1E293B" stroke-width="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" style="background-color: #FFFFFF; font-family: 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif;">
+  <defs>
+    <clipPath id="mapClip">
+      <rect x="${mapLeft}" y="${mapTop}" width="${mapW}" height="${mapH}"/>
+    </clipPath>
+  </defs>
+  <!-- Sheet frame -->
+  <rect x="0" y="0" width="${width}" height="${height}" fill="#FFFFFF"/>
+  <rect x="20" y="20" width="${width - 40}" height="${height - 40}" fill="none" stroke="#0F172A" stroke-width="1.5"/>
+  <rect x="26" y="26" width="${width - 52}" height="${height - 52}" fill="none" stroke="#94A3B8" stroke-width="0.5"/>
 
-  <!-- Generic Executive Header -->
-  <g transform="translate(50, 65)">
-    <rect x="0" y="-18" width="6" height="42" fill="#0EA5E9" rx="2"/>
-    <text x="18" y="0" font-size="16" font-weight="800" fill="#F8FAFC" letter-spacing="1.5">REGIONAL GIS PLANNING ATLAS</text>
-    <text x="18" y="18" font-size="11" font-weight="500" fill="#94A3B8">SETTLEMENT SUITABILITY &amp; HAZARD MITIGATION DOSSIER</text>
-    <text x="${width - 120}" y="6" font-size="10" font-family="monospace" fill="#38BDF8" text-anchor="end">METARDU DESKTOP — GENERIC PLANNING TEMPLATE</text>
+  <!-- Header -->
+  <g transform="translate(48, 72)">
+    <text x="0" y="0" font-size="17" font-weight="700" fill="#0F172A" letter-spacing="0.5">REGIONAL PLANNING ATLAS</text>
+    <text x="0" y="18" font-size="10" fill="#475569">Settlement suitability &amp; hazard exposure dossier — ${meta.title}</text>
+    <text x="${width - 96}" y="0" font-size="9" fill="#64748B" text-anchor="end">Locality: ${meta.locality} · ${meta.country}</text>
+    <text x="${width - 96}" y="15" font-size="9" font-family="monospace" fill="#64748B" text-anchor="end">CRS: ${meta.crs} · Date: ${meta.date}</text>
+    <line x1="0" y1="28" x2="${width - 96}" y2="28" stroke="#0F172A" stroke-width="1"/>
   </g>
 
-  <!-- KPI SUMMARY ROW -->
-  <g transform="translate(50, 115)">
-    <!-- KPI 1 -->
-    <rect x="0" y="0" width="250" height="70" fill="#1E293B" rx="6" stroke="#334155" stroke-width="1"/>
-    <text x="18" y="24" font-size="9" font-weight="700" fill="#38BDF8" letter-spacing="1">PRIME BUILDABLE YIELD</text>
-    <text x="18" y="52" font-size="22" font-weight="800" fill="#F8FAFC">${optimalPct + suitablePct}%</text>
-    <text x="95" y="50" font-size="10" fill="#94A3B8">(${result.boundary?.areaHa || 14.5} Ha Net)</text>
+  <!-- KPI strip (all values computed) -->
+  ${kpi(48, 258, "BUILDABLE ENVELOPE", `${buildableHa}`, `ha net of ${areaHa.toFixed(2)} ha`)}
+  ${kpi(318, 258, "SUITABLE + OPTIMAL CELLS", `${optimalPct + suitablePct}`, "% of evaluation grid")}
+  ${kpi(588, 258, "EXPOSED ASSETS", `${result.exposedAssets.length}`, `of ${result.points.length} surveyed features`)}
+  ${kpi(858, 294, "ELECTRIFICATION CAPEX", `$${Math.round(totalCapex).toLocaleString("en-US")}`, `${totalHh} HH in ${result.energyClusters.length} cluster(s)`)}
 
-    <!-- KPI 2 -->
-    <rect x="270" y="0" width="250" height="70" fill="#1E293B" rx="6" stroke="#334155" stroke-width="1"/>
-    <text x="18" y="24" font-size="9" font-weight="700" fill="#EF4444" letter-spacing="1">CRITICAL FLOOD EXPOSURE</text>
-    <text x="18" y="52" font-size="22" font-weight="800" fill="#F87171">${result.exposedAssets.length}</text>
-    <text x="65" y="50" font-size="10" fill="#94A3B8">Assets in Inundation Sink</text>
+  <!-- Choropleth map window -->
+  <g>
+    <rect x="${mapLeft - 1}" y="${mapTop - 1}" width="${mapW + 2}" height="${mapH + 2}" fill="#FBFBFA" stroke="#94A3B8" stroke-width="1"/>
+    <text x="${mapLeft}" y="${mapTop - 10}" font-size="10" font-weight="700" fill="#0F172A">MCDA SUITABILITY CHOROPLETH</text>
 
-    <!-- KPI 3 -->
-    <rect x="540" y="0" width="250" height="70" fill="#1E293B" rx="6" stroke="#334155" stroke-width="1"/>
-    <text x="18" y="24" font-size="9" font-weight="700" fill="#FACC15" letter-spacing="1">OFF-GRID SOLAR REACH</text>
-    <text x="18" y="52" font-size="22" font-weight="800" fill="#FDE047">${result.energyClusters.length}</text>
-    <text x="65" y="50" font-size="10" fill="#94A3B8">Viable Mini-Grid Clusters</text>
-
-    <!-- KPI 4 -->
-    <rect x="810" y="0" width="290" height="70" fill="#1E293B" rx="6" stroke="#334155" stroke-width="1"/>
-    <text x="18" y="24" font-size="9" font-weight="700" fill="#10B981" letter-spacing="1">STATUTORY COMPLIANCE</text>
-    <text x="18" y="52" font-size="22" font-weight="800" fill="#34D399">96 / 100</text>
-    <text x="130" y="50" font-size="10" fill="#94A3B8">Passed Legal Audit</text>
-  </g>
-
-  <!-- SUITABILITY MAP WINDOW -->
-  <g transform="translate(50, 210)">
-    <rect width="680" height="520" fill="#0B0F17" stroke="#334155" stroke-width="1.5" rx="6"/>
-    <text x="20" y="30" font-size="11" font-weight="700" fill="#F8FAFC">MCDA CLIMATE-SMART SUITABILITY CHOROPLETH</text>
-    <text x="20" y="46" font-size="9" fill="#64748B">Slope Weighted + 30m Riparian Buffer + Road Proximity Overlay</text>
-
-    <!-- Suitability cells rendered as rectangles -->
-    ${result.suitability.slice(0, 380).map((c, idx) => {
-      const col = (idx % 20);
-      const row = Math.floor(idx / 20);
-      let fill = "#10B981";
-      if (c.category === "optimal") fill = "#059669";
-      else if (c.category === "suitable") fill = "#10B981";
-      else if (c.category === "moderate") fill = "#F59E0B";
-      else if (c.category === "restricted") fill = "#EF4444";
-      else fill = "#7F1D1D";
-      return `<rect x="${30 + col * 31}" y="${60 + row * 22}" width="29" height="20" fill="${fill}" fill-opacity="0.75" rx="2"/>`;
+    <g clip-path="url(#mapClip)">
+    ${result.suitability.map((c) => {
+      const x = projX(c.x) - cellPx / 2;
+      const y = projY(c.y) - cellPx / 2;
+      const fill = classFill[c.category] || classFill.moderate;
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${cellPx.toFixed(1)}" height="${cellPx.toFixed(1)}" fill="${fill}" fill-opacity="0.82"/>`;
     }).join("")}
 
-    <!-- Map Legend -->
-    <g transform="translate(30, 485)">
-      <rect x="0" y="0" width="12" height="12" fill="#059669" rx="2"/>
-      <text x="18" y="10" font-size="8" fill="#94A3B8">Optimal (High Yield)</text>
-      <rect x="130" y="0" width="12" height="12" fill="#10B981" rx="2"/>
-      <text x="148" y="10" font-size="8" fill="#94A3B8">Suitable</text>
-      <rect x="220" y="0" width="12" height="12" fill="#F59E0B" rx="2"/>
-      <text x="238" y="10" font-size="8" fill="#94A3B8">Moderate Caution</text>
-      <rect x="340" y="0" width="12" height="12" fill="#EF4444" rx="2"/>
-      <text x="358" y="10" font-size="8" fill="#94A3B8">Restricted / Hazard</text>
+    ${boundaryPath ? `<path d="${boundaryPath}" fill="none" stroke="#0F172A" stroke-width="2" stroke-linejoin="round"/>` : ""}
+    </g>
+
+    <!-- Hazard sinks -->
+    ${result.hazardSinks.map((s) => {
+      const sx = projX(s.center[0]);
+      const sy = projY(s.center[1]);
+      return `
+        <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="9" fill="none" stroke="#c85a4f" stroke-width="1.2" stroke-dasharray="2,2"/>
+        <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="3" fill="#c85a4f"/>
+        <text x="${(sx + 12).toFixed(1)}" y="${(sy + 3).toFixed(1)}" font-size="8" fill="#8a3a32" font-family="monospace">${s.id} −${s.depthM.toFixed(1)}m</text>
+      `;
+    }).join("")}
+
+    <!-- North arrow -->
+    <g transform="translate(${mapLeft + mapW - 24}, ${mapTop + 26})">
+      <line x1="0" y1="10" x2="0" y2="-8" stroke="#0F172A" stroke-width="1"/>
+      <polygon points="0,-12 3.5,-4 0,-6.5 -3.5,-4" fill="#0F172A"/>
+      <text x="0" y="22" font-size="9" font-weight="700" fill="#0F172A" text-anchor="middle">N</text>
+    </g>
+
+    <!-- Legend -->
+    <g transform="translate(${mapLeft}, ${mapTop + mapH + 22})">
+      <text x="0" y="8" font-size="8.5" font-weight="700" fill="#475569">SUITABILITY CLASS</text>
+      <g transform="translate(0, 16)">
+        <rect x="0" y="0" width="11" height="11" fill="${classFill.optimal}"/>
+        <text x="16" y="9" font-size="8.5" fill="#475569">Optimal ${optimalPct}%</text>
+        <rect x="86" y="0" width="11" height="11" fill="${classFill.suitable}"/>
+        <text x="102" y="9" font-size="8.5" fill="#475569">Suitable ${suitablePct}%</text>
+        <rect x="172" y="0" width="11" height="11" fill="${classFill.moderate}"/>
+        <text x="188" y="9" font-size="8.5" fill="#475569">Moderate ${moderatePct}%</text>
+        <rect x="276" y="0" width="11" height="11" fill="${classFill.restricted}"/>
+        <text x="292" y="9" font-size="8.5" fill="#475569">Restricted ${restrictedPct}%</text>
+        <rect x="380" y="0" width="11" height="11" fill="${classFill.hazard}"/>
+        <text x="396" y="9" font-size="8.5" fill="#475569">Hazard ${hazardPct}%</text>
+      </g>
+      <text x="470" y="25" font-size="8" fill="#94A3B8" font-family="monospace">20 × 20 grid · weighted slope / road / riparian criteria</text>
     </g>
   </g>
 
-  <!-- RIGHT EXECUTIVE BRIEF & VULNERABILITY DOSSIER -->
-  <g transform="translate(755, 210)">
-    <!-- Card 1: Climate Hazard Vulnerability -->
-    <rect width="395" height="250" fill="#1E293B" stroke="#334155" stroke-width="1" rx="6"/>
-    <text x="18" y="28" font-size="11" font-weight="700" fill="#F87171">CLIMATE RISK &amp; FLOOD EXPOSURE REPORT</text>
-    <text x="18" y="45" font-size="9" fill="#94A3B8">Critical infrastructure identified within natural drainage sinks:</text>
-
-    ${result.exposedAssets.slice(0, 4).map((a, i) => `
-      <g transform="translate(18, ${65 + i * 42})">
-        <rect width="360" height="34" fill="#0F172A" rx="4" stroke="#475569" stroke-width="0.5"/>
-        <circle cx="15" cy="17" r="4" fill="${a.hazardRisk === "critical" ? "#EF4444" : "#F59E0B"}"/>
-        <text x="28" y="15" font-size="9" font-weight="600" fill="#F8FAFC">${a.name}</text>
-        <text x="28" y="27" font-size="8" fill="#94A3B8">Risk: ${a.hazardRisk.toUpperCase()} | Dist to Sink: ${a.distanceToSinkM}m</text>
-        <text x="345" y="21" font-size="8" font-family="monospace" fill="#38BDF8" text-anchor="end">${a.elevation.toFixed(1)}m</text>
+  <!-- Right column: exposure + energy + method -->
+  <g transform="translate(710, 210)">
+    <!-- Hazard exposure schedule -->
+    <text x="0" y="0" font-size="10" font-weight="700" fill="#0F172A">HAZARD EXPOSURE SCHEDULE</text>
+    <rect x="0" y="10" width="442" height="24" fill="#EEF1F4"/>
+    <text x="8" y="25" font-size="8" font-weight="700" fill="#475569">ASSET</text>
+    <text x="220" y="25" font-size="8" font-weight="700" fill="#475569">RISK</text>
+    <text x="268" y="25" font-size="8" font-weight="700" fill="#475569">ELEV (MSL)</text>
+    <text x="352" y="25" font-size="8" font-weight="700" fill="#475569">DIST TO SINK</text>
+    ${result.exposedAssets.slice(0, 6).map((a, i) => `
+      <g transform="translate(0, ${34 + i * 20})">
+        <line x1="0" y1="19" x2="442" y2="19" stroke="#E2E8F0" stroke-width="0.75"/>
+        <text x="8" y="13" font-size="8.5" fill="#0F172A">${a.name}</text>
+        <text x="220" y="13" font-size="8" font-weight="600" fill="${a.hazardRisk === "critical" ? "#c85a4f" : "#a06a1f"}">${a.hazardRisk.toUpperCase()}</text>
+        <text x="268" y="13" font-size="8" font-family="monospace" fill="#334155">${a.elevation.toFixed(1)} m</text>
+        <text x="352" y="13" font-size="8" font-family="monospace" fill="#334155">${a.distanceToSinkM} m</text>
       </g>
     `).join("")}
+    ${result.exposedAssets.length === 0
+      ? `<text x="8" y="50" font-size="8.5" fill="#64748B">No assets fall within a delineated inundation footprint.</text>`
+      : ""}
 
-    <!-- Card 2: Strategic Investment & Solar Reach -->
-    <g transform="translate(0, 270)">
-      <rect width="395" height="250" fill="#1E293B" stroke="#334155" stroke-width="1" rx="6"/>
-      <text x="18" y="28" font-size="11" font-weight="700" fill="#FACC15">STRATEGIC ELECTRIFICATION &amp; HOUSING RECOMMENDATION</text>
-      <text x="18" y="48" font-size="9" fill="#94A3B8">1. Enforce 30m riparian non-buildable setback along stream corridor.</text>
-      <text x="18" y="68" font-size="9" fill="#94A3B8">2. Target Cluster 1 (${result.energyClusters[0]?.householdCount || 60} HH) for immediate 15 kW Solar Mini-Grid deployment.</text>
-      <text x="18" y="88" font-size="9" fill="#94A3B8">3. Elevate access road crossing by +1.2m at culvert km 0+450.</text>
-      <text x="18" y="108" font-size="9" fill="#94A3B8">4. Rezone southern plateau (Slope &lt; 5%) for climate-smart resettlement.</text>
+    <!-- Electrification schedule -->
+    <g transform="translate(0, 180)">
+      <text x="0" y="0" font-size="10" font-weight="700" fill="#0F172A">ELECTRIFICATION PROGRAMME</text>
+      <rect x="0" y="10" width="442" height="24" fill="#EEF1F4"/>
+      <text x="8" y="25" font-size="8" font-weight="700" fill="#475569">CLUSTER</text>
+      <text x="120" y="25" font-size="8" font-weight="700" fill="#475569">HH</text>
+      <text x="170" y="25" font-size="8" font-weight="700" fill="#475569">PV (kWp)</text>
+      <text x="250" y="25" font-size="8" font-weight="700" fill="#475569">BATTERY (kWh)</text>
+      <text x="360" y="25" font-size="8" font-weight="700" fill="#475569">CAPEX (USD)</text>
+      ${result.energyClusters.slice(0, 5).map((c, i) => `
+        <g transform="translate(0, ${34 + i * 20})">
+          <line x1="0" y1="19" x2="442" y2="19" stroke="#E2E8F0" stroke-width="0.75"/>
+          <text x="8" y="13" font-size="8.5" fill="#0F172A">${c.id}</text>
+          <text x="120" y="13" font-size="8" font-family="monospace" fill="#334155">${c.householdCount}</text>
+          <text x="170" y="13" font-size="8" font-family="monospace" fill="#334155">${c.recommendedSolarKw}</text>
+          <text x="250" y="13" font-size="8" font-family="monospace" fill="#334155">${c.batteryStorageKwh}</text>
+          <text x="360" y="13" font-size="8" font-family="monospace" fill="#334155">${c.capexEstimateUsd.toLocaleString("en-US")}</text>
+        </g>
+      `).join("")}
+      ${result.energyClusters.length === 0
+        ? `<text x="8" y="50" font-size="8.5" fill="#64748B">No settlement clusters met the electrification modelling thresholds.</text>`
+        : ""}
+    </g>
 
-      <!-- Signoff Block -->
-      <line x1="18" y1="185" x2="180" y2="185" stroke="#475569" stroke-width="1"/>
-      <text x="18" y="200" font-size="8" font-weight="600" fill="#F8FAFC">PROGRAMME MANAGER</text>
-      <text x="18" y="212" font-size="7.5" fill="#64748B">Date: ${meta.date}</text>
+    <!-- Method & limitations note — professional practice -->
+    <g transform="translate(0, 360)">
+      <rect x="0" y="0" width="442" height="92" fill="#FBFBFA" stroke="#CBD5E1" stroke-width="0.75"/>
+      <text x="10" y="16" font-size="8.5" font-weight="700" fill="#475569">METHOD &amp; LIMITATIONS</text>
+      <text x="10" y="32" font-size="7.5" fill="#64748B">Suitability: weighted overlay (slope, road proximity, riparian setback) on a 20 × 20 grid over the parcel TIN.</text>
+      <text x="10" y="45" font-size="7.5" fill="#64748B">Hazard: inundation sinks delineated from TIN low-point drainage; exposure scored by 2D distance to sink.</text>
+      <text x="10" y="58" font-size="7.5" fill="#64748B">Electrification: SE4All / ESMAP multi-tier techno-economic sizing; costs are planning-level estimates.</text>
+      <text x="10" y="71" font-size="7.5" fill="#64748B">Figures are decision-support estimates, not a substitute for statutory detailed design.</text>
+      <text x="10" y="84" font-size="7.5" font-family="monospace" fill="#94A3B8">CRS ${meta.crs} · Prepared with MetaRDU GIS Studio · Surveyor: ${meta.surveyorName}</text>
+    </g>
 
-      <line x1="215" y1="185" x2="375" y2="185" stroke="#475569" stroke-width="1"/>
-      <text x="215" y="200" font-size="8" font-weight="600" fill="#F8FAFC">MUNICIPAL CHIEF PLANNER</text>
-      <text x="215" y="212" font-size="7.5" fill="#64748B">Statutory Endorsement</text>
+    <!-- Signoff -->
+    <g transform="translate(0, 486)">
+      <line x1="0" y1="0" x2="180" y2="0" stroke="#475569" stroke-width="1"/>
+      <text x="0" y="14" font-size="8" font-weight="600" fill="#0F172A">PROGRAMME MANAGER</text>
+      <text x="0" y="26" font-size="7.5" fill="#64748B">Date: ${meta.date}</text>
+      <line x1="242" y1="0" x2="442" y2="0" stroke="#475569" stroke-width="1"/>
+      <text x="242" y="14" font-size="8" font-weight="600" fill="#0F172A">MUNICIPAL CHIEF PLANNER</text>
+      <text x="242" y="26" font-size="7.5" fill="#64748B">Statutory endorsement</text>
     </g>
   </g>
 
   <!-- Footer -->
-  <g transform="translate(${width / 2}, ${height - 40})" text-anchor="middle">
-    <text font-size="8" font-family="monospace" fill="#64748B">METARDU DESKTOP | AUTONOMOUS GIS STUDIO — GENERIC PLANNING TEMPLATE</text>
+  <g transform="translate(${width / 2}, ${height - 34})" text-anchor="middle">
+    <text font-size="8" font-family="monospace" fill="#94A3B8">Regional Planning Atlas · A3 landscape · ${meta.crs} · Sheet 1 of 1 · ${meta.organization}</text>
   </g>
 </svg>
 `;

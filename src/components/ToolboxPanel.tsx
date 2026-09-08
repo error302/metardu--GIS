@@ -96,26 +96,26 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
       case "Zap": return <Zap className="w-4 h-4 text-yellow-400" />;
       case "CheckCircle": return <CheckCircle className="w-4 h-4 text-teal-400" />;
       case "Compass": return <Compass className="w-4 h-4 text-rose-400" />;
-      default: return <Wrench className="w-4 h-4 text-slate-400" />;
+      default: return <Wrench className="w-4 h-4 text-ink-3" />;
     }
   };
 
   return (
-    <div className="w-96 bg-slate-900/95 backdrop-blur-md border border-slate-800 rounded-xl shadow-2xl flex flex-col font-['Plus_Jakarta_Sans'] text-xs select-none overflow-hidden max-h-[85vh]">
+    <div className="w-96 bg-panel border border-line-strong rounded-[4px] shadow-2xl flex flex-col text-xs overflow-hidden max-h-[85vh]">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-950 border-b border-slate-800">
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-line bg-panel">
         <div className="flex items-center gap-2">
-          <Wrench className="w-4 h-4 text-blue-400" />
-          <span className="font-bold text-white tracking-wide">GEOPROCESSING TOOLBOX</span>
+          <Wrench className="w-4 h-4 text-ink-3" />
+          <span className="ui-label">Geoprocessing Toolbox</span>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-slate-500 font-mono">
+          <span className="text-[10px] tnum text-ink-3">
             {TOOLBOX_REGISTRY.length} tools
           </span>
           {onClose && (
             <button
               onClick={onClose}
-              className="text-slate-400 hover:text-white p-1 rounded transition cursor-pointer"
+              className="text-ink-3 hover:text-ink p-1 rounded transition cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -128,13 +128,13 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
         <div className="flex flex-col flex-1 overflow-hidden p-3 space-y-3">
           {/* Search */}
           <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-ink-3" />
             <input
               type="text"
               placeholder="Search tools by name, category..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
+              className="ui-input w-full pl-8"
             />
           </div>
 
@@ -142,10 +142,10 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
           <div className="flex gap-1 overflow-x-auto pb-1 text-[11px]">
             <button
               onClick={() => setSelectedCategory("all")}
-              className={`px-2.5 py-1 rounded-md shrink-0 transition cursor-pointer ${
+              className={`px-2.5 py-1 rounded-[3px] shrink-0 transition cursor-pointer border ${
                 selectedCategory === "all"
-                  ? "bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold"
-                  : "bg-slate-950 text-slate-400 hover:text-white"
+                  ? "bg-accent-dim text-accent border-accent/40 font-semibold"
+                  : "bg-sunken text-ink-3 border-line hover:text-ink-2"
               }`}
             >
               All
@@ -154,10 +154,10 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
               <button
                 key={cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`px-2.5 py-1 rounded-md shrink-0 transition cursor-pointer ${
+                className={`px-2.5 py-1 rounded-[3px] shrink-0 transition cursor-pointer border ${
                   selectedCategory === cat
-                    ? "bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold"
-                    : "bg-slate-950 text-slate-400 hover:text-white"
+                    ? "bg-accent-dim text-accent border-accent/40 font-semibold"
+                    : "bg-sunken text-ink-3 border-line hover:text-ink-2"
                 }`}
               >
                 {cat}
@@ -171,25 +171,25 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
               <div
                 key={tool.id}
                 onClick={() => handleSelectTool(tool)}
-                className="bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800/80 hover:border-blue-500/40 p-2.5 rounded-lg transition cursor-pointer flex items-start justify-between gap-3 group"
+                className="bg-sunken/80 hover:bg-raised border border-line hover:border-line-strong p-2.5 rounded-[3px] transition cursor-pointer flex items-start justify-between gap-3 group"
               >
                 <div className="flex items-start gap-2.5 min-w-0">
-                  <div className="p-1.5 bg-slate-900 rounded-md shrink-0 mt-0.5 border border-slate-800">
+                  <div className="p-1.5 bg-panel rounded-[3px] shrink-0 mt-0.5 border border-line">
                     {getToolIcon(tool.iconName)}
                   </div>
                   <div className="min-w-0">
-                    <div className="font-semibold text-slate-200 group-hover:text-blue-400 flex items-center gap-1.5">
+                    <div className="font-semibold text-ink-2 group-hover:text-ink flex items-center gap-1.5">
                       <span>{tool.name}</span>
                     </div>
-                    <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">
+                    <p className="text-[11px] text-ink-3 line-clamp-2 mt-0.5">
                       {tool.description}
                     </p>
-                    <span className="inline-block text-[9px] font-mono text-slate-500 mt-1 uppercase tracking-wider">
+                    <span className="inline-block text-[9px] font-mono text-ink-3 mt-1 uppercase tracking-wider">
                       {tool.category}
                     </span>
                   </div>
                 </div>
-                <ChevronRight className="w-4 h-4 text-slate-600 group-hover:text-blue-400 shrink-0 self-center" />
+                <ChevronRight className="w-4 h-4 text-ink-3 group-hover:text-ink shrink-0 self-center" />
               </div>
             ))}
           </div>
@@ -198,38 +198,38 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
         /* Active Tool Runner Form */
         <div className="flex flex-col flex-1 overflow-hidden p-4 space-y-3.5">
           {/* Back button & Title */}
-          <div className="flex items-start justify-between gap-2 border-b border-slate-800 pb-2.5">
+          <div className="flex items-start justify-between gap-2 border-b border-line pb-2.5">
             <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-slate-950 rounded-md border border-slate-800">
+              <div className="p-1.5 bg-sunken rounded-[3px] border border-line">
                 {getToolIcon(activeTool.iconName)}
               </div>
               <div>
-                <h4 className="font-bold text-white text-sm">{activeTool.name}</h4>
-                <span className="text-[10px] text-slate-500 font-mono uppercase">
+                <h4 className="font-semibold text-ink text-[13px]">{activeTool.name}</h4>
+                <span className="text-[10px] text-ink-3 font-mono uppercase">
                   {activeTool.category}
                 </span>
               </div>
             </div>
             <button
               onClick={() => setActiveTool(null)}
-              className="text-xs text-blue-400 hover:underline cursor-pointer"
+              className="text-xs text-accent hover:underline cursor-pointer"
             >
               Change Tool
             </button>
           </div>
 
-          <p className="text-xs text-slate-300">{activeTool.description}</p>
+          <p className="text-xs text-ink-2 leading-relaxed">{activeTool.description}</p>
 
           {/* Parameters Form */}
           <div className="flex-1 overflow-y-auto space-y-3 pr-1">
             {activeTool.params.length === 0 ? (
-              <div className="p-3 bg-slate-950/60 rounded-lg border border-slate-800 text-slate-400 text-xs text-center">
+              <div className="p-3 bg-sunken/80 rounded-[3px] border border-line text-ink-3 text-xs text-center">
                 This algorithm runs autonomously on the active pipeline dataset without custom arguments.
               </div>
             ) : (
               activeTool.params.map((param) => (
                 <div key={param.name} className="space-y-1">
-                  <label className="block text-slate-300 font-semibold text-xs">
+                  <label className="block text-ink-2 font-medium text-xs">
                     {param.label}
                   </label>
 
@@ -239,7 +239,7 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
                       onChange={(e) =>
                         setParamValues({ ...paramValues, [param.name]: e.target.value })
                       }
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500 cursor-pointer"
+                      className="ui-select w-full"
                     >
                       {param.options.map((opt) => (
                         <option key={opt.label} value={opt.value}>
@@ -254,7 +254,7 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
                       onChange={(e) =>
                         setParamValues({ ...paramValues, [param.name]: parseFloat(e.target.value) })
                       }
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-blue-500"
+                      className="ui-input w-full"
                     />
                   ) : (
                     <input
@@ -263,43 +263,43 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
                       onChange={(e) =>
                         setParamValues({ ...paramValues, [param.name]: e.target.value })
                       }
-                      className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                      className="ui-input w-full"
                     />
                   )}
 
-                  <p className="text-[10px] text-slate-500">{param.description}</p>
+                  <p className="text-[10px] text-ink-3">{param.description}</p>
                 </div>
               ))
             )}
 
             {/* Error Message */}
             {error && (
-              <div className="p-2.5 bg-rose-500/15 border border-rose-500/30 rounded text-rose-400 text-xs">
+              <div className="p-2.5 bg-dt-red/10 border border-dt-red/30 rounded-[3px] text-dt-red text-xs">
                 {error}
               </div>
             )}
 
             {/* Execution Result Box */}
             {executionResult && (
-              <div className="p-3 bg-emerald-950/40 border border-emerald-500/30 rounded-lg space-y-2">
+              <div className="p-3 bg-dt-green/10 border border-dt-green/30 rounded-[3px] space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-emerald-400 flex items-center gap-1.5">
+                  <span className="font-semibold text-dt-green flex items-center gap-1.5">
                     <CheckCircle className="w-3.5 h-3.5" />
-                    Completed Successfully
+                    Completed
                   </span>
-                  <span className="text-[10px] font-mono text-emerald-300/80 flex items-center gap-1">
+                  <span className="text-[10px] tnum text-dt-green/80 flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     {executionResult.durationMs} ms
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-300">{executionResult.message}</p>
+                <p className="text-[11px] text-ink-2">{executionResult.message}</p>
 
                 {executionResult.metrics && (
-                  <div className="grid grid-cols-2 gap-1.5 pt-1.5 border-t border-emerald-800/40 font-mono text-[10px]">
+                  <div className="grid grid-cols-2 gap-1.5 pt-1.5 border-t border-dt-green/20 tnum text-[10px]">
                     {Object.entries(executionResult.metrics).map(([k, v]) => (
-                      <div key={k} className="bg-slate-900/60 p-1.5 rounded">
-                        <span className="text-slate-500 block">{k}:</span>
-                        <span className="text-white font-bold">{v}</span>
+                      <div key={k} className="bg-sunken/60 p-1.5 rounded-[3px]">
+                        <span className="text-ink-3 block">{k}:</span>
+                        <span className="text-ink font-medium">{v}</span>
                       </div>
                     ))}
                   </div>
@@ -309,27 +309,24 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
           </div>
 
           {/* Action Buttons */}
-          <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-            <button
-              onClick={() => setActiveTool(null)}
-              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md transition cursor-pointer text-xs"
-            >
+          <div className="flex items-center justify-between pt-2.5 border-t border-line">
+            <button onClick={() => setActiveTool(null)} className="ui-btn">
               Back
             </button>
             <button
               onClick={handleRunTool}
               disabled={isRunning}
-              className="flex items-center gap-2 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-bold px-4 py-1.5 rounded-md shadow-md shadow-blue-600/30 transition disabled:opacity-50 cursor-pointer text-xs"
+              className="ui-btn-accent disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isRunning ? (
                 <>
-                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>EXECUTING...</span>
+                  <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  <span>Executing…</span>
                 </>
               ) : (
                 <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>RUN TOOL</span>
+                  <Play className="w-3 h-3 fill-current" />
+                  <span>Run Tool</span>
                 </>
               )}
             </button>

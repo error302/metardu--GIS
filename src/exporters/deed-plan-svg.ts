@@ -73,28 +73,87 @@ export function generateDeedPlanSvg(result: PipelineResult): string {
       graticuleLines.push(`
         <line x1="${mapLeft}" y1="${sy.toFixed(1)}" x2="${mapLeft + mapWidth}" y2="${sy.toFixed(1)}" stroke="#E2E8F0" stroke-width="0.75" stroke-dasharray="3,3"/>
         <text x="${mapLeft - 8}" y="${(sy + 3).toFixed(1)}" font-size="9" font-family="monospace" fill="#64748B" text-anchor="end">${n.toLocaleString()}m N</text>
-        <text x="${mapLeft + mapWidth + 8}" y="${(sy + 3).toFixed(1)}" font-size="9" font-family="monospace" fill="#64748B" text-anchor="start">${n.toLocaleString()}m N</text>
       `);
     }
   }
 
-  // Beacon Table Rows
-  const tableRows = (b?.bearingsDistances || []).map((bd, i) => {
+  // Beacon Coordinate Schedule — pure SVG grid (renderer-independent, print-safe)
+  const COLS = [
+    { key: "beacon", label: "BEACON", w: 62, align: "start" as const },
+    { key: "easting", label: "EASTING (m)", w: 68, align: "end" as const },
+    { key: "northing", label: "NORTHING (m)", w: 68, align: "end" as const },
+    { key: "elev", label: "H MSL (m)", w: 54, align: "end" as const },
+    { key: "bearing", label: "BEARING", w: 62, align: "end" as const },
+    { key: "dist", label: "DIST (m)", w: 46, align: "end" as const },
+  ];
+  const scheduleRows = (b?.bearingsDistances || []).map((bd) => {
     const pt = b?.points.find((p) => p.id === bd.fromId);
+    return {
+      beacon: bd.fromId,
+      easting: pt ? pt.easting.toFixed(2) : "—",
+      northing: pt ? pt.northing.toFixed(2) : "—",
+      elev: pt ? pt.elevation.toFixed(2) : "—",
+      bearing: bd.bearingDms,
+      dist: bd.distanceM.toFixed(2),
+    };
+  });
+  const ROW_H = 17;
+  const TABLE_W = COLS.reduce((s, c) => s + c.w, 0); // 360
+  const TABLE_X = 0;
+  const TABLE_Y = 112;
+  const TABLE_H = 24 + scheduleRows.length * ROW_H + 6;
+
+  const scheduleCell = (
+    x: number,
+    w: number,
+    y: number,
+    text: string,
+    opts: { align: "start" | "end"; bold?: boolean; mono?: boolean; fill?: string }
+  ) => {
+    const tx = opts.align === "end" ? x + w - 6 : x + 6;
     return `
-      <tr style="border-bottom: 1px solid #E2E8F0;">
-        <td style="padding: 4px 6px; font-weight: 600; color: #1E293B;">${bd.fromId}</td>
-        <td style="padding: 4px 6px; font-family: monospace;">${pt?.easting.toFixed(2)}</td>
-        <td style="padding: 4px 6px; font-family: monospace;">${pt?.northing.toFixed(2)}</td>
-        <td style="padding: 4px 6px; font-family: monospace;">${pt?.elevation.toFixed(2)}m</td>
-        <td style="padding: 4px 6px; font-family: monospace;">${bd.bearingDms}</td>
-        <td style="padding: 4px 6px; font-family: monospace;">${bd.distanceM.toFixed(2)}m</td>
-      </tr>
+      <text x="${tx}" y="${y}" font-size="8.5" ${opts.mono ? 'font-family="monospace"' : ''}
+        ${opts.bold ? 'font-weight="700"' : ''} fill="${opts.fill || "#1E293B"}" text-anchor="${opts.align}">${text}</text>
     `;
-  }).join("");
+  };
+
+  let scheduleSvg = `
+    <rect x="${TABLE_X}" y="${TABLE_Y}" width="${TABLE_W}" height="${TABLE_H}" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1"/>
+    <rect x="${TABLE_X}" y="${TABLE_Y}" width="${TABLE_W}" height="22" fill="#E8EDF3"/>
+    <line x1="${TABLE_X}" y1="${TABLE_Y + 22}" x2="${TABLE_X + TABLE_W}" y2="${TABLE_Y + 22}" stroke="#94A3B8" stroke-width="0.75"/>
+  `;
+
+  // header labels
+  let hx = TABLE_X;
+  for (const c of COLS) {
+    scheduleSvg += scheduleCell(hx, c.w, TABLE_Y + 14.5, c.label, { align: c.align, bold: true, fill: "#334155", mono: false });
+    if (c !== COLS[COLS.length - 1]) {
+      const vx = hx + c.w;
+      scheduleSvg += `<line x1="${vx}" y1="${TABLE_Y}" x2="${vx}" y2="${TABLE_Y + TABLE_H}" stroke="#E2E8F0" stroke-width="0.75"/>`;
+    }
+    hx += c.w;
+  }
+
+  // data rows
+  scheduleRows.forEach((row, ri) => {
+    const ry = TABLE_Y + 22 + ri * ROW_H;
+    if (ri > 0) {
+      scheduleSvg += `<line x1="${TABLE_X}" y1="${ry}" x2="${TABLE_X + TABLE_W}" y2="${ry}" stroke="#EDF1F5" stroke-width="0.75"/>`;
+    }
+    let cx = TABLE_X;
+    for (const c of COLS) {
+      scheduleSvg += scheduleCell(cx, c.w, ry + 12, (row as any)[c.key], {
+        align: c.align,
+        mono: c.key !== "beacon",
+        bold: c.key === "beacon",
+        fill: c.key === "beacon" ? "#0F172A" : "#334155",
+      });
+      cx += c.w;
+    }
+  });
 
   return `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" style="background-color: #FFFFFF; font-family: 'Plus Jakarta Sans', Arial, sans-serif;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" style="background-color: #FFFFFF; font-family: 'IBM Plex Sans', 'Segoe UI', Arial, sans-serif;">
   <defs>
     <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
       <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
@@ -187,28 +246,10 @@ export function generateDeedPlanSvg(result: PipelineResult): string {
 
     <!-- Beacon Coordinate Schedule Header -->
     <text x="0" y="102" font-size="11" font-weight="700" fill="#0F172A">BEACON COORDINATE SCHEDULE (Arc 1960 UTM 37S)</text>
-    <foreignObject x="0" y="112" width="360" height="230">
-      <div xmlns="http://www.w3.org/1999/xhtml" style="font-size: 8px; font-family: sans-serif; overflow-y: auto; max-height: 220px; border: 1px solid #CBD5E1; border-radius: 4px;">
-        <table style="width: 100%; border-collapse: collapse; text-align: left;">
-          <thead style="background: #E2E8F0; color: #1E293B; font-weight: 700;">
-            <tr>
-              <th style="padding: 4px 6px;">Beacon</th>
-              <th style="padding: 4px 6px;">Easting (m)</th>
-              <th style="padding: 4px 6px;">Northing (m)</th>
-              <th style="padding: 4px 6px;">H (MSL)</th>
-              <th style="padding: 4px 6px;">Bearing</th>
-              <th style="padding: 4px 6px;">Dist</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRows}
-          </tbody>
-        </table>
-      </div>
-    </foreignObject>
+    ${scheduleSvg}
 
     <!-- Surveyor Certification Block -->
-    <g transform="translate(0, 360)">
+    <g transform="translate(0, 262)">
       <rect x="0" y="0" width="360" height="110" fill="#FFFFFF" stroke="#0F172A" stroke-width="1" rx="4"/>
       <text x="12" y="18" font-size="9.5" font-weight="700" fill="#0F172A">LICENSED SURVEYOR CERTIFICATE</text>
       <text x="12" y="34" font-size="8" fill="#475569">I certify that this survey was executed under my personal</text>
@@ -220,7 +261,7 @@ export function generateDeedPlanSvg(result: PipelineResult): string {
     </g>
 
     <!-- Director of Surveys Approval Stamp Box -->
-    <g transform="translate(0, 485)">
+    <g transform="translate(0, 385)">
       <rect x="0" y="0" width="360" height="75" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1" stroke-dasharray="4,4" rx="4"/>
       <text x="180" y="24" font-size="9" font-weight="700" fill="#64748B" text-anchor="middle">DIRECTOR OF SURVEYS — LODGEMENT APPROVAL</text>
       <text x="180" y="44" font-size="8" fill="#94A3B8" text-anchor="middle">AUTHENTICATION STAMP &amp; REGISTRATION ENTRY</text>
@@ -230,7 +271,7 @@ export function generateDeedPlanSvg(result: PipelineResult): string {
 
   <!-- Bottom Metadata Footer -->
   <g transform="translate(${width / 2}, ${height - 42})" text-anchor="middle">
-    <text font-size="8" font-family="monospace" fill="#94A3B8">GENERATED BY METARDU GIS STUDIO AUTONOMOUS WORKSTATION | SUB-SECOND FIELD-TO-FINISH ENGINE</text>
+    <text font-size="8" font-family="monospace" fill="#94A3B8">Form No. 4 — Survey Regulations · Sheet 1 of 1 · ${meta.crs} · Composed with MetaRDU GIS Studio</text>
   </g>
 </svg>
 `;

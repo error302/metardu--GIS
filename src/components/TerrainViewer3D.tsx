@@ -1,17 +1,39 @@
 import React, { useRef, useEffect, useState } from "react";
-import { Rotate3d, Sliders, Layers, Mountain, Scissors } from "lucide-react";
 import { PipelineResult } from "../types/spatial";
 
 interface TerrainViewer3DProps {
   result: PipelineResult;
 }
 
+/** Muted hypsometric ramp — ColorBrewer-informed, print-safe. */
+function hypsometric(t: number): string {
+  const stops: [number, [number, number, number]][] = [
+    [0.0, [58, 82, 105]],
+    [0.28, [88, 125, 102]],
+    [0.52, [143, 158, 106]],
+    [0.75, [194, 163, 107]],
+    [0.92, [217, 203, 176]],
+    [1.0, [236, 230, 218]],
+  ];
+  const tt = Math.max(0, Math.min(1, t));
+  for (let i = 1; i < stops.length; i++) {
+    if (tt <= stops[i][0]) {
+      const [t0, c0] = stops[i - 1];
+      const [t1, c1] = stops[i];
+      const f = (tt - t0) / (t1 - t0 || 1);
+      return `rgb(${Math.round(c0[0] + (c1[0] - c0[0]) * f)}, ${Math.round(
+        c0[1] + (c1[1] - c0[1]) * f
+      )}, ${Math.round(c0[2] + (c1[2] - c0[2]) * f)})`;
+    }
+  }
+  return "rgb(236, 230, 218)";
+}
+
 export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // 3D Orbit & Perspective state
-  const [azimuth, setAzimuth] = useState(45); // degrees
-  const [pitch, setPitch] = useState(35); // degrees
+  const [azimuth, setAzimuth] = useState(45);
+  const [pitch, setPitch] = useState(35);
   const [verticalExaggeration, setVerticalExaggeration] = useState(2.0);
   const [formationDatum, setFormationDatum] = useState(
     result.tin ? result.tin.datumElevation : 1680
@@ -22,7 +44,6 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
-  // Recalculate cut/fill on datum change
   const { cutVol, fillVol } = React.useMemo(() => {
     if (!result.tin) return { cutVol: 0, fillVol: 0 };
     let cut = 0;
@@ -30,15 +51,13 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
     for (const tri of result.tin.triangles) {
       const avgZ = (tri.p1.elevation + tri.p2.elevation + tri.p3.elevation) / 3;
       const diff = avgZ - formationDatum;
-      // Approximate 2D area
-      const area = 250; // nominal
+      const area = 250;
       if (diff > 0) cut += area * diff;
       else fill += area * Math.abs(diff);
     }
     return { cutVol: Math.round(cut), fillVol: Math.round(fill) };
   }, [result.tin, formationDatum]);
 
-  // Center of the model
   const center = React.useMemo(() => {
     if (!result.tin || result.tin.vertices.length === 0) {
       return { x: 0, y: 0, z: 0, rangeX: 100, rangeY: 100, minZ: 0, maxZ: 100 };
@@ -64,7 +83,6 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
     };
   }, [result.tin]);
 
-  // Render 3D Perspective Projection
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -72,24 +90,23 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
     if (!ctx) return;
 
     const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * window.devicePixelRatio;
-    canvas.height = rect.height * window.devicePixelRatio;
-    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const w = rect.width;
     const h = rect.height;
 
-    // Clear dark background
-    ctx.fillStyle = "#0B0F17";
+    ctx.fillStyle = "#161619";
     ctx.fillRect(0, 0, w, h);
 
     if (!result.tin || result.tin.triangles.length === 0) {
-      ctx.fillStyle = "#64748B";
-      ctx.font = "12px sans-serif";
-      ctx.fillText("No 3D elevation TIN data available for this survey.", w / 2 - 120, h / 2);
+      ctx.fillStyle = "#70707a";
+      ctx.font = "12px 'IBM Plex Sans', sans-serif";
+      ctx.fillText("No elevation TIN available for this survey.", w / 2 - 100, h / 2);
       return;
     }
 
-    // 3D Rotation Matrix math
     const azRad = (azimuth * Math.PI) / 180;
     const pitchRad = (pitch * Math.PI) / 180;
     const cosAz = Math.cos(azRad);
@@ -104,24 +121,19 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
       const dy = n - center.y;
       const dz = (elev - center.z) * verticalExaggeration;
 
-      // Rotate azimuth (around Z)
       const x1 = dx * cosAz - dy * sinAz;
       const y1 = dx * sinAz + dy * cosAz;
       const z1 = dz;
 
-      // Rotate pitch (around X)
       const x2 = x1;
       const y2 = y1 * cosPitch - z1 * sinPitch;
       const z2 = y1 * sinPitch + z1 * cosPitch;
 
-      // Screen projection
       const sx = w / 2 + x2 * baseScale;
       const sy = h / 2 - z2 * baseScale;
-
-      return [sx, sy, y2]; // y2 is depth for z-sorting
+      return [sx, sy, y2];
     };
 
-    // Sort triangles from back to front (Painter's algorithm)
     const sortedTriangles = [...result.tin.triangles].map((tri) => {
       const avgE = (tri.p1.easting + tri.p2.easting + tri.p3.easting) / 3;
       const avgN = (tri.p1.northing + tri.p2.northing + tri.p3.northing) / 3;
@@ -129,26 +141,13 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
       const p = project3D(avgE, avgN, avgZ);
       return { tri, depth: p[2] };
     });
-
     sortedTriangles.sort((a, b) => a.depth - b.depth);
 
-    // Color gradient based on elevation
-    const getElevColor = (elev: number) => {
-      const t = Math.max(0, Math.min(1, (elev - center.minZ) / (center.maxZ - center.minZ || 1)));
-      // Hypsometric tint: Cyan -> Green -> Amber -> Red/White
-      if (t < 0.3) return `rgb(${Math.round(14 + t * 50)}, ${Math.round(165 + t * 100)}, ${Math.round(233)})`;
-      if (t < 0.6) return `rgb(${Math.round(16 + (t - 0.3) * 300)}, ${Math.round(185)}, ${Math.round(129 - (t - 0.3) * 150)})`;
-      if (t < 0.85) return `rgb(${Math.round(245)}, ${Math.round(158 - (t - 0.6) * 200)}, ${Math.round(11)})`;
-      return `rgb(${Math.round(239)}, ${Math.round(68)}, ${Math.round(68)})`;
-    };
-
-    // Draw triangles
     for (const item of sortedTriangles) {
       const tri = item.tri;
       const p1 = project3D(tri.p1.easting, tri.p1.northing, tri.p1.elevation);
       const p2 = project3D(tri.p2.easting, tri.p2.northing, tri.p2.elevation);
       const p3 = project3D(tri.p3.easting, tri.p3.northing, tri.p3.elevation);
-
       const avgZ = (tri.p1.elevation + tri.p2.elevation + tri.p3.elevation) / 3;
 
       ctx.beginPath();
@@ -157,27 +156,33 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
       ctx.lineTo(p3[0], p3[1]);
       ctx.closePath();
 
-      // Shading based on slope and lighting
-      const lightFactor = Math.max(0.3, Math.min(1.0, 0.7 + (tri.normal[0] * 0.2 + tri.normal[2] * 0.4)));
-      ctx.fillStyle = getElevColor(avgZ);
-      ctx.globalAlpha = 0.85;
+      const t = (avgZ - center.minZ) / (center.maxZ - center.minZ || 1);
+      const shade = Math.max(0.72, Math.min(1.08, 0.92 + (tri.normal[0] * 0.15 + tri.normal[2] * 0.3)));
+
+      // base color shaded by slope-aspect lighting
+      const base = hypsometric(t).match(/\d+/g);
+      if (base) {
+        const r = Math.round(Math.min(255, Number(base[0]) * shade));
+        const g = Math.round(Math.min(255, Number(base[1]) * shade));
+        const b = Math.round(Math.min(255, Number(base[2]) * shade));
+        ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      } else {
+        ctx.fillStyle = hypsometric(t);
+      }
       ctx.fill();
 
       if (showWireframe) {
-        ctx.strokeStyle = "#FFFFFF22";
+        ctx.strokeStyle = "rgba(22, 22, 25, 0.35)";
         ctx.lineWidth = 0.5;
-        ctx.globalAlpha = 0.4;
         ctx.stroke();
       }
-      ctx.globalAlpha = 1.0;
     }
 
-    // Draw 3D Contours draped over surface
     if (showContours) {
       for (const c of result.contours) {
         if (!c.isMajor) continue;
-        ctx.strokeStyle = "#FACC15DD";
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "rgba(232, 232, 234, 0.55)";
+        ctx.lineWidth = 1.1;
         ctx.beginPath();
         for (let i = 0; i < c.points.length; i++) {
           const pt = c.points[i];
@@ -189,22 +194,27 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
       }
     }
 
-    // Draw Formation Datum Cut/Fill Waterline Plane
-    const datumP1 = project3D(center.x - center.rangeX * 0.6, center.y - center.rangeY * 0.6, formationDatum);
-    const datumP2 = project3D(center.x + center.rangeX * 0.6, center.y - center.rangeY * 0.6, formationDatum);
-    const datumP3 = project3D(center.x + center.rangeX * 0.6, center.y + center.rangeY * 0.6, formationDatum);
-    const datumP4 = project3D(center.x - center.rangeX * 0.6, center.y + center.rangeY * 0.6, formationDatum);
+    // Formation datum plane
+    const d = center.rangeX * 0.6;
+    const d2 = center.rangeY * 0.6;
+    const corners: [number, number][] = [
+      [center.x - d, center.y - d2],
+      [center.x + d, center.y - d2],
+      [center.x + d, center.y + d2],
+      [center.x - d, center.y + d2],
+    ].map(([e, n]) => {
+      const p = project3D(e, n, formationDatum);
+      return [p[0], p[1]];
+    }) as [number, number][];
 
     ctx.beginPath();
-    ctx.moveTo(datumP1[0], datumP1[1]);
-    ctx.lineTo(datumP2[0], datumP2[1]);
-    ctx.lineTo(datumP3[0], datumP3[1]);
-    ctx.lineTo(datumP4[0], datumP4[1]);
+    ctx.moveTo(corners[0][0], corners[0][1]);
+    corners.slice(1).forEach(([x, y]) => ctx.lineTo(x, y));
     ctx.closePath();
-    ctx.fillStyle = "#38BDF825";
+    ctx.fillStyle = "rgba(98, 191, 195, 0.08)";
     ctx.fill();
-    ctx.strokeStyle = "#38BDF8";
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(98, 191, 195, 0.55)";
+    ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.stroke();
     ctx.setLineDash([]);
@@ -219,7 +229,6 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
     if (!isDragging) return;
     const dx = e.clientX - dragStart.x;
     const dy = e.clientY - dragStart.y;
-
     setAzimuth((prev) => (prev + dx * 0.5) % 360);
     setPitch((prev) => Math.max(10, Math.min(85, prev - dy * 0.3)));
     setDragStart({ x: e.clientX, y: e.clientY });
@@ -227,9 +236,42 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
 
   const handleMouseUp = () => setIsDragging(false);
 
+  const OrbitSlider = ({
+    label,
+    value,
+    display,
+    min,
+    max,
+    step,
+    onChange,
+  }: {
+    label: string;
+    value: number;
+    display: string;
+    min: number;
+    max: number;
+    step: number;
+    onChange: (v: number) => void;
+  }) => (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[12px] text-ink-2">{label}</span>
+        <span className="tnum text-[12px] text-ink">{display}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full h-1 bg-line rounded-full appearance-none cursor-pointer accent-[#d9a441]"
+      />
+    </div>
+  );
+
   return (
-    <div className="relative w-full h-[calc(100vh-125px)] bg-[#0B0F17] flex">
-      {/* 3D Canvas */}
+    <div className="relative w-full h-full bg-sunken flex">
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
@@ -239,117 +281,55 @@ export const TerrainViewer3D: React.FC<TerrainViewer3DProps> = ({ result }) => {
         className="w-full h-full cursor-grab active:cursor-grabbing block"
       />
 
-      {/* Control Panel (Floating Right) */}
-      <div className="absolute top-4 right-4 w-72 bg-slate-900/95 backdrop-blur border border-slate-800 rounded-xl p-4 shadow-2xl z-10 text-xs font-['Plus_Jakarta_Sans'] flex flex-col gap-4">
-        <div className="flex items-center gap-2 border-b border-slate-800 pb-2.5">
-          <Mountain className="w-4 h-4 text-blue-400" />
-          <h2 className="font-bold text-white tracking-wide">3D SURFACE &amp; TERRAIN</h2>
+      {/* Control panel — docked right */}
+      <div className="absolute top-3 right-3 w-72 bg-panel/95 backdrop-blur border border-line rounded-[4px] shadow-2xl z-10 overflow-hidden">
+        <div className="ui-panel-head">
+          <span className="ui-label">3D surface</span>
+          <span className="text-[10px] tnum text-ink-3">
+            {center.minZ.toFixed(0)}–{center.maxZ.toFixed(0)} m
+          </span>
         </div>
 
-        {/* Orbit Controls */}
-        <div className="space-y-3">
-          <div>
-            <div className="flex justify-between text-slate-400 mb-1">
-              <span>Azimuth Orbit</span>
-              <span className="font-mono text-white">{Math.round(azimuth)}°</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="360"
-              value={azimuth}
-              onChange={(e) => setAzimuth(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-          </div>
+        <div className="p-3.5 flex flex-col gap-4 text-[12px]">
+          <OrbitSlider label="Azimuth" value={azimuth} display={`${Math.round(azimuth)}°`} min={0} max={360} step={1} onChange={setAzimuth} />
+          <OrbitSlider label="Pitch" value={pitch} display={`${Math.round(pitch)}°`} min={10} max={85} step={1} onChange={setPitch} />
+          <OrbitSlider label="Vertical exaggeration" value={verticalExaggeration} display={`${verticalExaggeration.toFixed(1)}×`} min={1.0} max={5.0} step={0.2} onChange={setVerticalExaggeration} />
 
-          <div>
-            <div className="flex justify-between text-slate-400 mb-1">
-              <span>Pitch Tilt</span>
-              <span className="font-mono text-white">{Math.round(pitch)}°</span>
-            </div>
-            <input
-              type="range"
-              min="10"
-              max="85"
-              value={pitch}
-              onChange={(e) => setPitch(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-          </div>
-
-          <div>
-            <div className="flex justify-between text-slate-400 mb-1">
-              <span>Vertical Exaggeration</span>
-              <span className="font-mono text-white">{verticalExaggeration.toFixed(1)}x</span>
-            </div>
-            <input
-              type="range"
-              min="1.0"
-              max="5.0"
-              step="0.2"
-              value={verticalExaggeration}
-              onChange={(e) => setVerticalExaggeration(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-            />
-          </div>
-        </div>
-
-        {/* Cut / Fill Earthwork Balancing */}
-        <div className="border-t border-slate-800 pt-3 space-y-2">
-          <div className="flex items-center gap-1.5 text-slate-300 font-semibold">
-            <Scissors className="w-3.5 h-3.5 text-amber-400" />
-            <span>EARTHWORK CUT &amp; FILL</span>
-          </div>
-
-          <div>
-            <div className="flex justify-between text-slate-400 mb-1">
-              <span>Formation Datum Plane</span>
-              <span className="font-mono text-sky-400">{formationDatum.toFixed(1)}m</span>
-            </div>
-            <input
-              type="range"
-              min={center.minZ - 5}
-              max={center.maxZ + 5}
-              step="0.5"
-              value={formationDatum}
-              onChange={(e) => setFormationDatum(Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 pt-1 font-mono text-[11px]">
-            <div className="bg-slate-950 p-2 rounded border border-slate-800">
-              <span className="text-red-400 block text-[10px]">CUT (EXCAVATION)</span>
-              <strong className="text-white">{cutVol.toLocaleString()} m³</strong>
-            </div>
-            <div className="bg-slate-950 p-2 rounded border border-slate-800">
-              <span className="text-cyan-400 block text-[10px]">FILL (EMBANKMENT)</span>
-              <strong className="text-white">{fillVol.toLocaleString()} m³</strong>
+          <div className="border-t border-line pt-3.5 space-y-3">
+            <span className="ui-label">Earthwork datum</span>
+            <OrbitSlider label="Formation level" value={formationDatum} display={`${formationDatum.toFixed(1)} m`} min={center.minZ - 5} max={center.maxZ + 5} step={0.5} onChange={setFormationDatum} />
+            <div className="grid grid-cols-2 gap-px bg-line border border-line rounded-[3px] overflow-hidden">
+              <div className="bg-sunken p-2.5">
+                <span className="ui-label block mb-0.5 text-dt-red">Cut</span>
+                <span className="tnum text-[13px] text-ink">{cutVol.toLocaleString("en-US")} m³</span>
+              </div>
+              <div className="bg-sunken p-2.5">
+                <span className="ui-label block mb-0.5 text-dt-cyan">Fill</span>
+                <span className="tnum text-[13px] text-ink">{fillVol.toLocaleString("en-US")} m³</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Display Toggles */}
-        <div className="border-t border-slate-800 pt-3 flex flex-col gap-2">
-          <label className="flex items-center justify-between text-slate-300 cursor-pointer">
-            <span>Show TIN Wireframe</span>
-            <input
-              type="checkbox"
-              checked={showWireframe}
-              onChange={(e) => setShowWireframe(e.target.checked)}
-              className="rounded border-slate-700 text-blue-600 focus:ring-0 cursor-pointer"
-            />
-          </label>
-          <label className="flex items-center justify-between text-slate-300 cursor-pointer">
-            <span>Show 3D Contours</span>
-            <input
-              type="checkbox"
-              checked={showContours}
-              onChange={(e) => setShowContours(e.target.checked)}
-              className="rounded border-slate-700 text-blue-600 focus:ring-0 cursor-pointer"
-            />
-          </label>
+          <div className="border-t border-line pt-3 flex flex-col gap-2">
+            <label className="flex items-center justify-between text-ink-2 cursor-pointer">
+              <span>TIN wireframe</span>
+              <input
+                type="checkbox"
+                checked={showWireframe}
+                onChange={(e) => setShowWireframe(e.target.checked)}
+                className="accent-[#d9a441] cursor-pointer"
+              />
+            </label>
+            <label className="flex items-center justify-between text-ink-2 cursor-pointer">
+              <span>Major contours</span>
+              <input
+                type="checkbox"
+                checked={showContours}
+                onChange={(e) => setShowContours(e.target.checked)}
+                className="accent-[#d9a441] cursor-pointer"
+              />
+            </label>
+          </div>
         </div>
       </div>
     </div>
