@@ -98,8 +98,10 @@ The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in 
 * **Live ground truth, offline-first:** XYZ raster basemaps (OSM / Esri) with Cache-API persistence, the official NGA EGM2008 2.5′ geoid grid for East Africa, and Terrarium terrain-tile DEM probes.
 
 ### 10. Print Composer (Desktop-Grade Cartography)
-* Versioned template schema (ISO A4–A1, mm geometry) with 12 composable element kinds: map frames (fit or fixed 1:N), computed tables, KPI strips, legends, method-note provenance, certification and signoff blocks.
-* Statutory Form 4 and Planning Atlas presets route through one render engine with live fit preview, SVG download, and @page-sized print.
+* Versioned template schema (ISO A4–A1, mm geometry) with 13 composable element kinds: map frames (fit or fixed 1:N), computed tables, KPI strips, legends, method-note provenance, locator insets, certification and signoff blocks.
+* Statutory Form 4 and Planning Atlas presets route through one render engine with live fit preview, SVG download, 300-DPI PNG rasterisation (fonts embedded), and @page-sized print.
+* **Atlas cartography:** TIN facet shaded relief (NW 315° / 45° sun) beneath the theme, index-contour elevation labels with halo text (arc-length placement, upright, budgeted), point-label decluttering (hazard > cluster), boundary casing, graticule ticks, and a locator inset placing the parcel on an adaptive UTM grid with the zone captioned.
+* Legends disclose their classification: per-class counts and the exact MCDA class breaks from the engine's own constants — every colour on the sheet is re-derivable.
 * Sensitivity analysis: MCDA weight sliders re-evaluate the composed decision sheet live, with exact weights and uncertainty disclosed on the sheet.
 
 ### 11. Field-to-Statute Workflow
@@ -123,10 +125,10 @@ The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in 
 
 ## Test Suite & Verification
 
-Nineteen test suites verify geodetic accuracy, parser robustness, mathematical precision, spatial-index parity against brute force, Shapefile byte roundtrips, GeoPackage writer conformance, WKT CRS parsing, EWKB reading, provenance integrity, CRDT convergence, and GEOS-parity corridor geometry:
+Twenty test suites verify geodetic accuracy, parser robustness, mathematical precision, spatial-index parity against brute force, Shapefile byte roundtrips, GeoPackage writer conformance, WKT CRS parsing, EWKB reading, provenance integrity, CRDT convergence, and GEOS-parity corridor geometry:
 
 ```bash
-# Run all 19 test suites
+# Run all 20 test suites
 npm test
 
 # Performance benchmarks (hard budgets, CI-exitable)
