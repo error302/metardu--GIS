@@ -134,7 +134,10 @@ roundtrip), `tsc` clean, production build green, manual QA: worker-mode pipeline
 undo/redo round-trip, real Shapefile pair import (4 beacons + road polyline),
 6k-point CSV ingest with LOD rendering.
 
-### Phase B — Connected when available, offline-first always (weeks 4–8)
+### Phase B — Connected when available, offline-first always — ✅ DELIVERED
+
+*Goal: real ground truth — live basemaps, a statutory-grade vertical datum, and the
+other half of the data-ingress story — without giving up the offline promise.*
 
 - **Basemap tiles:** OSM raster + optional satellite URL templates with graceful
   offline fallback to the current vector basemaps; Service Worker tile cache.
@@ -144,6 +147,24 @@ undo/redo round-trip, real Shapefile pair import (4 beacons + road polyline),
   the surveyed TIN footprint.
 - **CRS expansion:** PROJ search + paste-EPSG UX (the proj4 registry is already
   there; the UI should accept any EPSG string, not a fixed list).
+- **GeoPackage ingest** (deferred from Phase A).
+
+#### Phase B delivery notes (this branch)
+
+| Commitment | Status | Implementation |
+|---|---|---|
+| Basemap tiles | ✅ | `src/core/tiles.ts` + MapCanvas2D — OSM streets and Esri World Imagery XYZ providers; tiles reprojected onto the working CRS (per-tile corner anchoring, sub-pixel residual at survey scales); rAF-coalesced epoch in the static-cache signature so basemap tiles arrive without blocking; overzoom (zoom-drop) fallback beyond z19; attribution credit line pinned lower-right; dark graticule/label ink + haloed labels on light streets tiles. **Offline:** fetch-through **Cache API** persistence (tiles survive sessions) + negative caching; when the network is gone the procedural vector basemap shows through and the canvas prints `OFFLINE — vector basemap fallback`. (A Service Worker proved unnecessary — the Cache API alone delivers repeat-session offline tiles.) |
+| Real geoid | ✅ | `src/core/geoid/grid.ts` + `public/geoid/egm2008-ea-2p5.bin` — the official NGA **EGM2008 2.5′** grid (`us_nga_egm08_25`, PROJ CDN, converted from `egm08_25.gtx`) windowed to 10°N..8°S / 26..46°E (433×481 nodes, 417 KB int16-cm MTGEOD01 binary, no nodata), lazy-loaded at app mount. Corner-registered bilinear sampling with an exact-node fast path; H = h − N now statutory-grade across the whole pipeline. **The old mock had the wrong sign** (claimed N ≈ +10–25 m over Kenya; reality is −5 to −45 m — the region sits on the flank of the Indian Ocean geoid low). Verified: EGM2008 vs EGM96 mutual agreement ≤ 0.9 m at six anchor cities; parser/asset locked by `tests/geoid-grid.test.ts`. Provenance chip in the status bar (`Geoid EGM2008 2.5′`) with coverage/accuracy tooltip; pipeline telemetry names the active model. Fallback (asset fetch failure / outside window): inverse-distance over six EGM2008 anchor values, disclosed as `parametric*` and "NOT for statutory height work". |
+| Elevation tiles | ✅ | `src/core/dem.ts` — Terrarium/Mapzen DEM sampling (zoom 8–14, ~10 m/px, bilinear in-tile) with a decoded-grid LRU. Map tool-rail probe (Mountain icon): click anywhere for regional elevation + ground-resolution + dataset credit, explicit `DEM unavailable` chip when offline/outside coverage — never a fabricated value. Scoped as context only; the surveyed TIN remains the statutory source of truth inside the job boundary. |
+| CRS expansion | ✅ | `crs.ts` + `CrsPicker` — programmatic registry of **all 120 WGS84 UTM zones** plus the real Arc 1960 UTM codes (21035–37 S / 21095–97 N), deduped against hand-curated defs; scored full-text search; **paste-any-EPSG**: unknown codes fetch + validate their proj4 string from epsg.io (8 s timeout, garbage rejected) and persist to localStorage for offline reuse. Replaces the Phase A fixed dropdown. |
+| GeoPackage ingest | ✅ | `src/core/ingest/gpkg.ts` — dependency-light reader on **sql.js** (SQLite WASM, lazy ~1 MB chunk fetched only when a .gpkg is imported; test path passes `wasmBinary` directly). GP binary blob header per spec (srs_id always present; bit 4 = empty-geometry flag) + recursive WKB reader (XY/Z/M, ISO Z/M type flags, multi-geometries). Routes through the same SurveyPoint pipeline as Shapefile/GeoJSON with category/code inference and typed attributes; Import accepts `.gpkg`. Byte-accurate fixture built by `scripts/build_gpkg_fixture.py` locks the roundtrip. |
+
+**Verification:** 10/10 test suites pass (was 6), `tsc` clean, production build
+ green, all 11 benchmark budgets honoured (pipeline @ 50k: 1.20 s). Manual QA:
+ OSM/Esri tiles over the Nairobi job (overlay lands exactly on the real
+ streets), offline pan with cached-tile continuity, CRS search + EPSG:32636
+ pick, DEM probe chip, and a real `.gpkg` imported end-to-end in the UI
+ (point + polyline + polygon + Z point → 10 vertices).
 
 ### Phase C — Desktop-grade (months 2–4)
 
