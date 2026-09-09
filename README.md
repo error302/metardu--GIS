@@ -4,6 +4,8 @@
 
 MetaRDU GIS Studio is a high-performance, offline-capable geospatial workstation engineered for professional GIS specialists, licensed land surveyors, municipal urban planners, and off-grid energy engineers. It bridges the gap between raw field surveys, statutory cadastral governance, multi-criteria planning, and decentralized electrification—operating with sub-second execution speeds and zero server roundtrips.
 
+The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in a Web Worker, every figure on every statutory document is computed from live pipeline state (never fabricated), and the workstation reads and writes the exchange formats the African GIS economy actually uses—Shapefile, GeoPackage, DXF, LandXML, GeoJSON.
+
 ---
 
 ## Capabilities & Feature Matrix
@@ -78,15 +80,42 @@ MetaRDU GIS Studio is a high-performance, offline-capable geospatial workstation
   * Off-grid electrification parameters
   * MCDA suitability weights
 * 1-Click "Save Project" and "Open Project" from the application header.
+* Optional CRDT change-set export (`.metardu-changes.json`) for field-to-office sync.
+
+### 8. Data Ingress & Egress (Field-to-Office Interchange)
+* **Read:** Shapefile (`.shp` + `.dbf` + `.shx` + `.prj`, shape types 1/3/5/8 with Z/M variants), dBASE III field typing (C/N/F/D/L), GeoJSON, CSV/TSV, KML, LandXML, GeoPackage (`.gpkg` via lazy sql.js WASM), and live PostGIS layers (read-only HTTP bridge with single-statement write guards).
+* **Write:** GeoPackage (OGC-conformant, byte-verified), AutoCAD DXF R2018, LandXML 1.2, RFC 7946 GeoJSON, print-ready SVG sheets, CSV schedules, and one-click statutory lodgement ZIP bundles.
+* `.prj` sidecars are parsed by a dependency-free WKT engine (TM/UTM, LCC, Mercator, Cassini, Albers, LAEA, Stereographic, HOM, Krovak) and geometry is auto-reprojected to the working CRS with a disclosed note.
+
+### 9. Platform Architecture (Performance & Reliability)
+* **Web Worker pipeline** with a 9-stage progress protocol; transparent main-thread fallback keeps the UI responsive during heavy runs.
+* **Uniform-grid spatial index** (points/triangles/segments) with brute-force parity tests; MCDA distance queries drop from O(n·m) to O(local).
+* **Renderer v2:** static-scene caching, viewport culling, LOD dot-mode beyond ~2,000 visible points.
+* **Undo/redo command history** (Ctrl+Z / Ctrl+Shift+Z) over labeled document operations.
+* **Benchmark harness** with hard, CI-exitable budgets over deterministic 10k/50k synthetic scenarios (`npm run bench`).
+* **Machine-readable provenance graph** (FNV-1a digest, tamper-evident) embedded in every export—each figure carries its method citation, resolved inputs, and stated tolerance.
+* **Edge-first CRDT** (LWW registers + add-wins sets) for offline-first multi-device project sync, with an optional zero-dependency LAN relay.
+* **Live ground truth, offline-first:** XYZ raster basemaps (OSM / Esri) with Cache-API persistence, the official NGA EGM2008 2.5′ geoid grid for East Africa, and Terrarium terrain-tile DEM probes.
+
+### 10. Print Composer (Desktop-Grade Cartography)
+* Versioned template schema (ISO A4–A1, mm geometry) with 12 composable element kinds: map frames (fit or fixed 1:N), computed tables, KPI strips, legends, method-note provenance, certification and signoff blocks.
+* Statutory Form 4 and Planning Atlas presets route through one render engine with live fit preview, SVG download, and @page-sized print.
+* Sensitivity analysis: MCDA weight sliders re-evaluate the composed decision sheet live, with exact weights and uncertainty disclosed on the sheet.
+
+### 11. Field-to-Statute Workflow
+* Guided traverse workflow: load a boundary, compute misclosure in plain language (verdict, axis bias, worst leg, class tolerance), apply Bowditch adjustment as an undoable document push.
+* One-click lodgement package: LandXML + provenance JSON + beacon/traverse CSV schedules + Form 4 SVG in a single ZIP with a manifest.
 
 ---
 
 ## 1-Click Statutory Deliverables Export
 
 * **Official Form 4 Statutory Deed Plan (Mutation Sheet)**: Formatted with official survey border, title block, coordinate graticule grid, true north arrow, metric scale bar, and Beacon Coordinate Schedule Table.
-* **Regional Planning Atlas**: Pre-composed decision dossier with executive KPI cards, suitability choropleth, hazard vulnerability matrix, and municipal approval blocks.
-* **AutoCAD DXF R2018**: Layered CAD drawing (`BOUNDARIES`, `CONTOURS`, `BEACONS`, `BUFFERS`).
-* **Standards-Compliant GeoJSON**: RFC 7946 with CRS header and dynamic attribute properties.
+* **Regional Planning Atlas**: Pre-composed decision dossier with executive KPI cards, suitability choropleth, hazard vulnerability matrix, and municipal approval blocks—every KPI computed from live pipeline state, with a method-and-limitations disclosure on the sheet.
+* **GeoPackage (OGC)**: Conformant write path (application id, contents, geometry columns) for mr_beacons, mr_vectors, mr_boundary, and mr_provenance attribute tables.
+* **Lodgement ZIP**: LandXML + provenance + CSV schedules + Form 4 sheet in one bundle with a manifest.
+* **AutoCAD DXF R2018**: Layered CAD drawing (`BOUNDARIES`, `CONTOURS`, `BEACONS`, `BUFFERS` as closed LWPOLYLINE rings).
+* **Standards-Compliant GeoJSON**: RFC 7946 with CRS header, dynamic attribute properties, embedded provenance, and corridor Polygon features.
 * **LandXML 1.2 Digital Cadastre**: National land portal digital lodgement schema.
 * **Attribute Table CSV**: Full coordinate mutation schedule with custom properties.
 
@@ -94,23 +123,21 @@ MetaRDU GIS Studio is a high-performance, offline-capable geospatial workstation
 
 ## Test Suite & Verification
 
-The workstation includes automated unit tests verifying geodetic accuracy, parser robustness, and mathematical precision:
+Nineteen test suites verify geodetic accuracy, parser robustness, mathematical precision, spatial-index parity against brute force, Shapefile byte roundtrips, GeoPackage writer conformance, WKT CRS parsing, EWKB reading, provenance integrity, CRDT convergence, and GEOS-parity corridor geometry:
 
 ```bash
-# Run all test suites
-npx tsx tests/crs.test.ts
-npx tsx tests/parser-calculator.test.ts
-npx tsx tests/cogo-traverse.test.ts
-npx tsx tests/project.test.ts
+# Run all 19 test suites
+npm test
 
-# Production build
+# Performance benchmarks (hard budgets, CI-exitable)
+npm run bench
+
+# Type check + production build
+npx tsc --noEmit
 npm run build
 ```
 
-* `tests/crs.test.ts`: Round-trip geodetic datum transforms verified to $< 1$ mm precision.
-* `tests/parser-calculator.test.ts`: CSV attribute retention, expression evaluation, and roundtrip serialization verified.
-* `tests/cogo-traverse.test.ts`: COGO forward/inverse, ray intersections, Bowditch adjustment, and topology snapping verified.
-* `tests/project.test.ts`: Complete `.metardu.json` project snapshot and restore verified.
+Corridor buffers are validated against reference polygons generated with **GEOS** (shapely — the engine behind QGIS/PostGIS) over six deterministic fixtures at 15 m/30 m widths: area within 0.5 %, boundary agreement within 0.10 m both ways, ring simplicity enforced. All benchmark budgets honoured at head: 50k-point pipeline ≈ 1.2 s, MCDA warm re-evaluation ≈ 190 ms, undo/redo 1,000 ops ≈ 0.5 ms.
 
 ---
 
@@ -139,9 +166,10 @@ Open `http://localhost:5173/` in your browser.
 
 ## Technology Stack
 
-* **UI & Workstation Architecture**: React 19, TypeScript 5.7, Tailwind CSS v4, Lucide Icons
-* **Geodesy & Projections**: `proj4`, EGM2008 Geoid Model, Vincenty Geodesy
-* **Computational Geometry**: Delaunay Triangulation, Marching Squares, Bowyer-Watson, Bowditch Least-Squares
+* **UI & Workstation Architecture**: React 19, TypeScript 5.7, Tailwind CSS v4, Lucide Icons, IBM Plex Sans/Mono, Web Workers
+* **Geodesy & Projections**: `proj4`, dependency-free ESRI WKT parser, EGM2008 Geoid Model (official NGA grid), Vincenty Geodesy
+* **Computational Geometry**: Delaunay triangulation (`delaunator` sweep-hull), Marching Squares, uniform-grid spatial indexing, Bowditch Least-Squares, GEOS-parity corridor joins
+* **Data Interchange**: sql.js (GeoPackage read/write), dBASE III parser, EWKB (PostGIS), store+CRC-32 ZIP writer
 * **Build System**: Vite 6, Rolldown
 
 ---
