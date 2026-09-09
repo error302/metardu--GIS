@@ -73,6 +73,43 @@ tabular numerals everywhere numbers are compared vertically.
 
 All four test suites pass; production build is green.
 
+### Atlas cartography standard (v2, this branch)
+
+Sheet output was upgraded from "correct" to atlas-grade. The rules now in
+force for every composed sheet (Form 4, Planning Atlas, custom templates):
+
+1. **Shaded relief** — TIN facet Lambertian hillshade (sun NW 315° / 45°),
+   bucketed into ≤ 18 gray paths, drawn beneath thematic layers at 55 %
+   strength. Terrain form is visible through the choropleth instead of a
+   flat colored grid. Facet budget keeps 50k-mesh sheets printable.
+2. **Index-contour labelling** — major contours carry their elevation in
+   halo text, placed by arc length, rotated along the line, always upright,
+   budgeted per frame. Suppressed beats overlapping.
+3. **Point-label decluttering on sheets** — hazard and cluster labels pass
+   a greedy screen-space collision pass (hazard wins; suppressed beats
+   overlapping). Cluster labels disclose household counts.
+4. **Boundary casing** — white casing under the parcel stroke so the legal
+   boundary reads over any background fill.
+5. **Graticule ticks** — solid ticks crossing the frame edge at every
+   coordinate label, atlas convention.
+6. **Locator (index) inset** — the parcel extent on an adaptive UTM grid
+   (window ≈ 8× parcel diagonal, step from {5,10,20,50,100} km), zone
+   captioned when the CRS encodes one. A reader can place the sheet in its
+   zone without external data.
+7. **Legend discloses its classification** — per-class counts (n=), the
+   exact MCDA class breaks (from the engine's own constants), relief sun
+   geometry, and symbol entries for every layer actually present.
+8. **Scale bar** — subdivided first segment, bare numbers on inner ticks,
+   unit on the final label, "grid metres" caption.
+9. **Print-DPI raster export** — every sheet exports as PNG at 300 DPI with
+   the IBM Plex web fonts embedded into the rasterisation (base64 woff2
+   inside the SVG), so raster output carries the same type as the vector
+   original. Falls back to system faces offline.
+
+Verified by `tests/cartography.test.ts` (photometry, placement, zone
+parsing, locator snapping, integration render) and visual QA renders of
+both statutory presets over a 6k-point real-pipeline scenario.
+
 ---
 
 ## Part II — Platform Upgrade Roadmap
