@@ -108,8 +108,20 @@ export function exportToDxf(result: PipelineResult): string {
     }
   }
 
-  // 4. Corridor Buffer Lines
+  // 4. Corridor Buffers: closed reserve boundary (LWPOLYLINE, join-resolved
+  //    geometry from the GEOS-parity engine) + the two edge paths as LINE
+  //    entities for CAD editing convenience.
   for (const buf of result.buffers) {
+    if (buf.polygon.length > 2) {
+      add(0, "LWPOLYLINE");
+      add(8, "SETBACK-BUFFERS");
+      add(90, buf.polygon.length);
+      add(70, 1); // closed
+      for (const [x, y] of buf.polygon) {
+        add(10, x);
+        add(20, y);
+      }
+    }
     const drawOffset = (offsetPts: [number, number][]) => {
       for (let i = 0; i < offsetPts.length - 1; i++) {
         add(0, "LINE");

@@ -417,17 +417,20 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
         ctx.lineWidth = 1;
         ctx.setLineDash([5, 4]);
 
-        const drawPolygon = (pts1: [number, number][], pts2: [number, number][]) => {
-          if (pts1.length < 2 || pts2.length < 2) return;
+        const drawCorridor = (buf: { polygon: [number, number][]; leftOffset: [number, number][]; rightOffset: [number, number][] }) => {
+          const ring = buf.polygon.length > 2 ? buf.polygon : null;
+          const edges = ring ?? buf.leftOffset;
+          const back = ring ? [] : buf.rightOffset;
+          if (edges.length < 2) return;
           ctx.beginPath();
-          ctx.moveTo(toScreenX(pts1[0][0]), toScreenY(pts1[0][1]));
-          for (let i = 1; i < pts1.length; i++) ctx.lineTo(toScreenX(pts1[i][0]), toScreenY(pts1[i][1]));
-          for (let i = pts2.length - 1; i >= 0; i--) ctx.lineTo(toScreenX(pts2[i][0]), toScreenY(pts2[i][1]));
+          ctx.moveTo(toScreenX(edges[0][0]), toScreenY(edges[0][1]));
+          for (let i = 1; i < edges.length; i++) ctx.lineTo(toScreenX(edges[i][0]), toScreenY(edges[i][1]));
+          for (let i = back.length - 1; i >= 0; i--) ctx.lineTo(toScreenX(back[i][0]), toScreenY(back[i][1]));
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
         };
-        drawPolygon(buf.leftOffset, buf.rightOffset);
+        drawCorridor(buf);
         ctx.setLineDash([]);
       }
     }
