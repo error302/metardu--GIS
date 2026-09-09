@@ -6,10 +6,12 @@ import {
   Layers,
   Wrench,
   MousePointer2,
+  Mountain,
 } from "lucide-react";
 import { PipelineResult, SurveyPoint } from "../types/spatial";
 import { crsEpsgFromMetadata, toWGS84, fromWGS84 } from "../core/crs";
 import { TILE_PROVIDERS, TileService, tilesForViewport, TileProvider } from "../core/tiles";
+import { probeElevation, DemProbe, DEM_ATTRIBUTION } from "../core/dem";
 import { DEFAULT_LAYERS, LayerItem } from "../core/layer-store";
 import { LayerPanel } from "./LayerPanel";
 import { ToolboxPanel } from "./ToolboxPanel";
@@ -160,6 +162,28 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
 
   const [showLayerPanel, setShowLayerPanel] = useState(false);
   const [showToolbox, setShowToolbox] = useState(false);
+
+  // Regional DEM probe (Terrarium tiles) — elevation context beyond the
+  // surveyed TIN footprint. Never used for statutory heights.
+  interface ProbeState {
+    worldE: number;
+    worldN: number;
+    lat: number;
+    lon: number;
+    status: "loading" | "done" | "error";
+    dem?: DemProbe;
+  }
+  const [probeMode, setProbeMode] = useState(false);
+  const [probe, setProbe] = useState<ProbeState | null>(null);
+
+  useEffect(() => {
+    if (!probeMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProbeMode(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [probeMode]);
 
   // Calculate project bounds
   const bounds = useMemo(() => {
@@ -839,6 +863,57 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
+    /* ---------------- DEM probe marker (dynamic furniture) ---------------- */
+    if (probe) {
+      const sx = toScreenX(probe.worldE);
+      const sy = toScreenY(probe.worldN);
+      ctx.save();
+      // crosshair marker
+      ctx.strokeStyle = C.selected;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 9, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(sx - 13, sy);
+      ctx.lineTo(sx - 5, sy);
+      ctx.moveTo(sx + 5, sy);
+      ctx.lineTo(sx + 13, sy);
+      ctx.moveTo(sx, sy - 13);
+      ctx.lineTo(sx, sy - 5);
+      ctx.moveTo(sx, sy + 5);
+      ctx.lineTo(sx, sy + 13);
+      ctx.stroke();
+
+      const text =
+        probe.status === "loading"
+          ? "sampling regional DEM…"
+          : probe.status === "error" || !probe.dem
+            ? "DEM unavailable (offline or outside coverage)"
+            : `DEM ${probe.dem.elevationM.toLocaleString("en-US", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })} m  ·  ±${probe.dem.resolutionM} m/px  ·  ${DEM_ATTRIBUTION}`;
+      ctx.font = "9px 'IBM Plex Mono', monospace";
+      const tw = ctx.measureText(text).width;
+      const cx = sx + 18;
+      const cy = sy - 14;
+      ctx.fillStyle = C.chipBg;
+      ctx.strokeStyle = C.chipLine;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(cx, cy - 8, tw + 14, 16, 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.textAlign = "left";
+      ctx.fillStyle = probe.status === "done" ? C.ink : C.ink2;
+      ctx.fillText(text, cx + 7, cy + 3);
+      ctx.textAlign = "center";
+      ctx.restore();
+    }
+
     /* ---------------- Cartographic furniture ---------------- */
 
     /* North arrow — minimal, bottom-right */
@@ -902,7 +977,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       ctx.fillText(`${barM} m`, bx + barPx + 2, by - 5);
       ctx.restore();
     }
-  }, [zoom, pan, basemap, layers, layersSig, result, selectedPointIds, isCad, isOsmLight, tileProvider, tilesEpoch, activeEpsg, resizeTick]);
+  }, [zoom, pan, basemap, layers, layersSig, result, selectedPointIds, isCad, isOsmLight, tileProvider, tilesEpoch, activeEpsg, probe, resizeTick]);
 
   /* ---------------- Interactions ---------------- */
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -963,13 +1038,35 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   };
 
   const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!onSelectPoint) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
 
+    if (probeMode) {
+      const worldE = toWorldE(mx);
+      const worldN = toWorldN(my);
+      let lat = 0, lon = 0;
+      try {
+        [lon, lat] = toWGS84(activeEpsg, worldE, worldN);
+      } catch {
+        return;
+      }
+      const next: ProbeState = { worldE, worldN, lat, lon, status: "loading" };
+      setProbe(next);
+      probeElevation(lat, lon).then((dem) => {
+        // Ignore stale probes from earlier clicks
+        setProbe((cur) =>
+          cur && cur.lat === next.lat && cur.lon === next.lon
+            ? { ...cur, status: dem ? "done" : "error", dem: dem ?? undefined }
+            : cur,
+        );
+      });
+      return;
+    }
+
+    if (!onSelectPoint) return;
     let bestId: string | null = null;
     let bestD = 10; // px hit radius
     for (const p of result.points) {
@@ -1034,6 +1131,16 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
           <Maximize2 className="w-4 h-4" />
         </button>
         <div className="w-5 h-px bg-line-strong my-0.5" />
+        <button
+          className={`ui-btn-icon ${probeMode ? "is-active" : ""}`}
+          onClick={() => {
+            setProbeMode((v) => !v);
+            if (probeMode) setProbe(null);
+          }}
+          title="Regional DEM probe — click the map to sample regional elevation (Terrarium terrain tiles; context only, not a surveyed height). Esc to exit."
+        >
+          <Mountain className="w-4 h-4" />
+        </button>
         <button
           className={`ui-btn-icon ${showLayerPanel ? "is-active" : ""}`}
           onClick={() => { setShowLayerPanel((v) => !v); setShowToolbox(false); }}
