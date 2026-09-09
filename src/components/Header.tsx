@@ -17,7 +17,8 @@ import {
   Import,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
-import { listSupportedEPSG, crsEpsgFromMetadata } from "../core/crs";
+import { CrsPicker } from "./CrsPicker";
+import { crsEpsgFromMetadata } from "../core/crs";
 
 export type ActiveTab =
   | "canvas2d"
@@ -100,7 +101,6 @@ export const Header: React.FC<HeaderProps> = ({
   undoLabel,
   redoLabel,
 }) => {
-  const supportedCrs = listSupportedEPSG();
   const activeEpsg = crsEpsgFromMetadata(currentCrs || selectedScenario.metadata.crs);
 
   return (
@@ -211,18 +211,7 @@ export const Header: React.FC<HeaderProps> = ({
           ))}
         </select>
 
-        <select
-          value={activeEpsg}
-          onChange={(e) => onCrsChange?.(Number(e.target.value))}
-          className="ui-select w-[240px]"
-          title="Coordinate Reference System"
-        >
-          {supportedCrs.map((c) => (
-            <option key={c.epsg} value={c.epsg}>
-              EPSG:{c.epsg} — {c.name}
-            </option>
-          ))}
-        </select>
+        <CrsPicker activeEpsg={activeEpsg} onCrsChange={onCrsChange ?? (() => {})} />
 
         {/* Right cluster */}
         <div className="ml-auto flex items-center gap-2">
