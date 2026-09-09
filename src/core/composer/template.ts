@@ -98,7 +98,7 @@ export interface ComposerText {
   color?: string;
 }
 
-export type TableSource = "beacons" | "hazards" | "energy" | "telemetry";
+export type TableSource = "beacons" | "hazards" | "energy" | "telemetry" | "provenance";
 
 export interface ComposerTable {
   kind: "table";

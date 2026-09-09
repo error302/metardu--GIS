@@ -21,6 +21,7 @@ import { useHistoryState } from "./hooks/use-history";
 import { initGeoidModel, subscribeGeoidStatus, GeoidStatus } from "./core/geoid/grid";
 import { ComposerPanel } from "./components/ComposerPanel";
 import { PostgisPanel } from "./components/PostgisPanel";
+import { ProvenancePanel } from "./components/ProvenancePanel";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
@@ -402,6 +403,7 @@ export const App: React.FC = () => {
         {activeTab === "postgis" && (
           <PostgisPanel onImportPoints={handlePostgisImport} />
         )}
+        {activeTab === "provenance" && <ProvenancePanel result={pipelineResult} />}
         {activeTab === "datagrid" && (
           <AttributeTable
             result={pipelineResult}

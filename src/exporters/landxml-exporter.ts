@@ -4,6 +4,7 @@
  */
 
 import { PipelineResult } from "../types/spatial";
+import { buildProvenanceGraph, ProvenanceGraph } from "../core/provenance";
 
 export function exportToLandXml(result: PipelineResult): string {
   const dateStr = new Date().toISOString().split("T")[0];
@@ -42,7 +43,34 @@ export function exportToLandXml(result: PipelineResult): string {
   }
 
   xml += `</LandXML>`;
+
+  // Provenance rides as an XML comment block: LandXML 1.2 has no extension
+  // point for it, and comments survive every standards-compliant parser.
+  xml += `\n${provenanceComment(buildProvenanceGraph(result))}`;
   return xml;
+}
+
+function provenanceComment(graph: ProvenanceGraph): string {
+  const lines: string[] = [
+    "==================== METARDU PROVENANCE (machine-readable audit) ====================",
+    `digest: ${graph.digest}  format: ${graph.format} ${graph.version}  generatedAt: ${graph.generatedAt}`,
+    `project: ${graph.project.title} | CRS: ${graph.project.crs} | surveyor: ${graph.project.surveyorName} (${graph.project.registrationNo})`,
+  ];
+  for (const n of graph.nodes) {
+    if (n.kind === "figure") {
+      lines.push(
+        `FIGURE [${n.id}] ${n.label} = ${n.value ?? "-"} | method: ${n.methodCitation ?? "-"}`,
+      );
+      if (n.inputs?.length) lines.push(`        inputs: ${n.inputs.join(" <- ")}`);
+      if (n.tolerance) lines.push(`        tolerance: ${n.tolerance}`);
+    } else if (n.kind === "source") {
+      lines.push(`SOURCE [${n.id}] ${n.label}: ${n.origin ?? "-"}`);
+    } else {
+      lines.push(`PROCESS [${n.id}] ${n.label} (${n.durationMs ?? "?"} ms)`);
+    }
+  }
+  lines.push("====================================== END PROVENANCE ======================================");
+  return lines.map((l) => `<!-- ${l.replace(/--/g, "- -")} -->`).join("\n");
 }
 
 function escapeXml(unsafe: string): string {

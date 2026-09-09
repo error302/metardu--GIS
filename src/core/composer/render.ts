@@ -9,6 +9,7 @@
 
 import { PipelineResult, SurveyVector } from "../../types/spatial";
 import { getGeoidProvenance } from "../crs";
+import { buildProvenanceGraph, provenanceCompactRows } from "../provenance";
 import {
   ComposerElement, ComposerMapFrame, ComposerTable, ResolveContext,
   resolveFieldValue, resolveFooter, pageDimsMm, ComposerTemplate,
@@ -418,6 +419,18 @@ function renderTable(result: PipelineResult, el: ComposerTable): string {
       c.id, String(c.householdCount), String(c.recommendedSolarKw), String(c.batteryStorageKwh),
       c.capexEstimateUsd.toLocaleString("en-US"),
     ]);
+  } else if (el.source === "provenance") {
+    const graph = buildProvenanceGraph(result);
+    cols = [
+      { label: "FIGURE", w: 78, align: "start" },
+      { label: "VALUE", w: 92, align: "start", mono: true },
+      { label: "METHOD", w: 96, align: "start" },
+      { label: "BASIS (inputs)", w: 110, align: "start" },
+      { label: "TOLERANCE / LIMITATION", w: 168, align: "start" },
+    ];
+    rows = provenanceCompactRows(graph).map((r) => [
+      r.figure, r.value, r.method, r.basis, r.tolerance,
+    ]);
   } else {
     cols = [
       { label: "STAGE", w: 120, align: "start" },
@@ -471,11 +484,13 @@ function renderTable(result: PipelineResult, el: ComposerTable): string {
     ? result.boundary?.bearingsDistances.length ?? 0
     : el.source === "hazards" ? result.exposedAssets.length
     : el.source === "energy" ? result.energyClusters.length
+    : el.source === "provenance"
+    ? buildProvenanceGraph(result).nodes.filter((n) => n.kind === "figure").length
     : result.telemetries.length;
   if (source > rows.length) {
     out.push(`<text x="${f1(el.x * PX_PER_MM)}" y="${f1(y + headH + rows.length * rowH + 11)}" font-size="7" fill="#94A3B8">(+${source - rows.length} more rows omitted — see data table)</text>`);
   } else if (source === 0) {
-    out.push(`<text x="${f1(el.x * PX_PER_MM + 5)}" y="${f1(y + headH + 16)}" font-size="7.5" fill="#64748B">No ${el.source === "beacons" ? "adjusted boundary traverse" : el.source === "hazards" ? "exposed assets — no assets inside delineated hazard footprints" : el.source === "energy" ? "clusters met the electrification thresholds" : "telemetry"} to report.</text>`);
+    out.push(`<text x="${f1(el.x * PX_PER_MM + 5)}" y="${f1(y + headH + 16)}" font-size="7.5" fill="#64748B">No ${el.source === "beacons" ? "adjusted boundary traverse" : el.source === "hazards" ? "exposed assets — no assets inside delineated hazard footprints" : el.source === "energy" ? "clusters met the electrification thresholds" : el.source === "provenance" ? "computed figures — provenance register is empty" : "telemetry"} to report.</text>`);
   }
   out.push("</g>");
   return out.join("\n");

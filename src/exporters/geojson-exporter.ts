@@ -4,6 +4,7 @@
  */
 
 import { PipelineResult } from "../types/spatial";
+import { buildProvenanceGraph } from "../core/provenance";
 
 export function exportToGeoJson(result: PipelineResult): string {
   const features: any[] = [];
@@ -99,6 +100,8 @@ export function exportToGeoJson(result: PipelineResult): string {
       generator: "MetaRDU GIS Studio Autonomous Workstation",
       timestamp: new Date().toISOString(),
     },
+    // RFC 7946 §6.1 allows foreign members — provenance travels with the data.
+    provenance: buildProvenanceGraph(result),
     features,
   };
 

@@ -17,6 +17,7 @@ import {
   Import,
   Printer,
   Database,
+  Fingerprint,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
 import { CrsPicker } from "./CrsPicker";
@@ -32,7 +33,8 @@ export type ActiveTab =
   | "atlas"
   | "composer"
   | "datagrid"
-  | "postgis";
+  | "postgis"
+  | "provenance";
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -85,6 +87,7 @@ const NAV_GROUPS: { label: string; items: { id: ActiveTab; label: string; icon: 
     items: [
       { id: "datagrid", label: "Attribute Table", icon: Table2 },
       { id: "postgis", label: "PostGIS Link", icon: Database },
+      { id: "provenance", label: "Provenance", icon: Fingerprint },
     ],
   },
 ];

@@ -15,6 +15,7 @@
 
 import { PipelineResult } from "../../types/spatial";
 import { crsEpsgFromMetadata, getCRS } from "../crs";
+import { buildProvenanceGraph } from "../provenance";
 import { openSqlDatabase, SqlJsDatabase as Db } from "../ingest/gpkg";
 
 /* ---------------- WKB writer (standard, little-endian) ---------------- */
@@ -201,6 +202,25 @@ export async function exportGpkg(result: PipelineResult, opts?: GpkgExportOption
       bindBlob(db, `INSERT INTO "${table}" (geom, parcel_no, name, perimeter_m, area_ha, precision_ratio, precision_rating) VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [blob, b.parcelNo, b.name, b.perimeterM, b.areaHa, b.precisionRatio, b.precisionRating]);
       updateContentsExtent(db, table, e);
+    }
+
+    /* ---- mr_provenance (attributes table — machine-readable audit) ---- */
+    const prov = buildProvenanceGraph(result);
+    const provTable = `${prefix}provenance`;
+    db.exec(`CREATE TABLE "${provTable}" (fid INTEGER PRIMARY KEY AUTOINCREMENT, node_id TEXT, kind TEXT, label TEXT, value TEXT, method TEXT, inputs TEXT, tolerance TEXT, origin TEXT, duration_ms REAL)`);
+    db.exec(`INSERT INTO gpkg_contents (table_name, data_type, identifier, description, last_change, srs_id) VALUES ('${provTable}', 'attributes', '${provTable}', 'Provenance graph digest ${prov.digest} (${prov.format} ${prov.version})', '${ts}', NULL)`);
+    // Graph header row carries the integrity digest.
+    db.exec(`INSERT INTO "${provTable}" (node_id, kind, label, value) VALUES ('__graph__', 'graph', ?, ?)`,
+      [prov.digest, prov.generatedAt]);
+    for (const n of prov.nodes) {
+      db.exec(
+        `INSERT INTO "${provTable}" (node_id, kind, label, value, method, inputs, tolerance, origin, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          n.id, n.kind, n.label, n.value ?? null, n.methodCitation ?? null,
+          (n.inputs ?? []).join("; ") || null, n.tolerance ?? null, n.origin ?? null,
+          n.durationMs ?? null,
+        ],
+      );
     }
 
     if (allXy.length === 0) {
