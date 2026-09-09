@@ -163,12 +163,26 @@ const bbox = { minE: 400_100, maxE: 400_500, minN: 9_949_800, maxN: 9_950_100 };
 const model = buildLocatorModel(bbox, "Arc 1960 / UTM zone 37S");
 ok(model !== null, "locator model built");
 assert.ok(model);
-ok(model.window.minE % 100_000 === 0 && model.window.minN % 100_000 === 0,
-  "grid window snapped to 100 km");
-ok(model.window.maxE - model.window.minE >= 200_000, "at least one grid square of margin");
-ok(model.eastings.length >= 3 && model.northings.length >= 2, "grid lines span the window");
+ok(model.step === 5_000, `small parcel → 5 km grid (got ${model.step})`);
+ok(model.window.minE % model.step === 0 && model.window.minN % model.step === 0,
+  "grid window snapped to the grid step");
+ok(model.window.maxE - model.window.minE >= 2 * model.step, "window spans ≥ 2 grid squares");
+{
+  const winSpan = Math.max(
+    model.window.maxE - model.window.minE,
+    model.window.maxN - model.window.minN,
+  );
+  ok((bbox.maxE - bbox.minE) / winSpan > 0.005, "parcel renders as a visible box, not a dot");
+}
+ok(model.eastings.length >= 3 && model.northings.length >= 3, "grid lines span the window");
 assert.deepStrictEqual(model.extent, bbox, "parcel extent preserved");
 assert.deepStrictEqual(model.zone, { zone: 37, south: true }, "zone parsed for caption");
+
+// Large parcel → coarser grid, still 2–6 squares across.
+const big = buildLocatorModel(
+  { minE: 400_000, maxE: 550_000, minN: 9_950_000, maxN: 10_100_000 }, "EPSG:21037",
+);
+ok(big !== null && big.step === 50_000, `large parcel → 50 km grid (got ${big?.step})`);
 
 const noZone = buildLocatorModel(bbox, "EPSG:4326");
 ok(noZone !== null && noZone.zone === null, "non-UTM CRS → grid without zone claim");
@@ -229,7 +243,10 @@ const result: PipelineResult = {
   })),
   hazardSinks: [{ id: "S1", center: [401_500, 9_951_200], depthM: 2.4, catchmentAreaHa: 3.2 }],
   exposedAssets: [],
-  energyClusters: [],
+  energyClusters: [{
+    id: "CLUSTER-1", centroid: [401_200, 9_950_500], householdCount: 540,
+    recommendedSolarKw: 151.2, batteryStorageKwh: 1134, capexEstimateUsd: 86_460,
+  }],
   telemetries: [],
   totalDurationMs: 0,
 } as unknown as PipelineResult;
@@ -242,8 +259,9 @@ ok(svg.includes('id="legend_relief_ramp"'), "relief ramp gradient defined");
 ok(/fill="rgb\(\d+,\d+,\d+\)"/.test(svg), "relief facet paths present");
 ok(svg.includes("paint-order=\"stroke\""), "halo text on contour labels");
 ok(svg.includes("id=\"locator\""), "locator element rendered");
-ok(svg.includes("100 km grid · UTM zone 37S"), "locator captions the parsed zone");
-ok(svg.includes("n="), "legend carries per-class counts");
+ok(svg.includes("km grid · UTM zone 37S"), "locator captions the parsed zone");
+ok(/n=\d/.test(svg), "legend carries per-class counts");
+ok(svg.includes("hh"), "cluster labels carry household counts");
 ok(svg.includes("class breaks") || svg.includes("class breaks:"), "legend discloses breaks");
 ok(svg.includes("optimal ≥78"), "legend break values match the engine constants");
 ok(svg.includes("grid metres"), "scale bar carries the unit caption");

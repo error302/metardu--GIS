@@ -310,7 +310,8 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
     parts.push(`<path d="${d}" fill="none" stroke="#1D4ED8" stroke-width="2.2" stroke-linejoin="round"/>`);
   }
 
-  // Hazard sinks — dashed impact ring + core dot
+  // Hazard sinks — dashed impact ring + core dot (label decluttered below)
+  const pointLabels: { x: number; y: number; text: string; ink: string; pri: number }[] = [];
   if (L.hazards && result.hazardSinks.length > 0) {
     for (const s of result.hazardSinks) {
       const cx = proj.toX(s.center[0]);
@@ -319,13 +320,13 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
       const r = Math.max(8, Math.min(14, 6 + s.depthM));
       parts.push(
         `<circle cx="${f1(cx)}" cy="${f1(cy)}" r="${f1(r)}" fill="none" stroke="#c85a4f" stroke-width="1.2" stroke-dasharray="2,2"/>` +
-        `<circle cx="${f1(cx)}" cy="${f1(cy)}" r="3" fill="#c85a4f"/>` +
-        `<text x="${f1(cx + r + 3)}" y="${f1(cy + 3)}" font-size="8" fill="#8a3a32" font-family="monospace">${esc(s.id)} −${f1(s.depthM)}m</text>`,
+        `<circle cx="${f1(cx)}" cy="${f1(cy)}" r="3" fill="#c85a4f"/>`,
       );
+      pointLabels.push({ x: cx + r + 3, y: cy + 3, text: `${s.id} −${f1(s.depthM)}m`, ink: "#8a3a32", pri: 1 });
     }
   }
 
-  // Energy clusters — circle sized by household count
+  // Energy clusters — circle sized by household count (label decluttered below)
   if (L.energy && result.energyClusters.length > 0) {
     const maxHh = Math.max(...result.energyClusters.map((c) => c.householdCount), 1);
     for (const c of result.energyClusters) {
@@ -336,6 +337,27 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
       parts.push(
         `<circle cx="${f1(cx)}" cy="${f1(cy)}" r="${f1(r)}" fill="none" stroke="#a06a1f" stroke-width="1.4"/>` +
         `<circle cx="${f1(cx)}" cy="${f1(cy)}" r="1.8" fill="#a06a1f"/>`,
+      );
+      pointLabels.push({ x: cx + r + 3, y: cy + 3, text: `${c.id} · ${c.householdCount} hh`, ink: "#7a5416", pri: 2 });
+    }
+  }
+
+  // Point-label decluttering — greedy screen-space collision, hazard labels
+  // win over cluster labels, suppressed beats overlapping (sheet doctrine).
+  {
+    const taken: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    const accepted: typeof pointLabels = [];
+    for (const l of [...pointLabels].sort((a, b) => a.pri - b.pri)) {
+      const wPx = l.text.length * 4.6 + 4;
+      const r = { x0: l.x, y0: l.y - 9, x1: l.x + wPx, y1: l.y + 3 };
+      const collides = taken.some((t) => !(r.x1 < t.x0 || r.x0 > t.x1 || r.y1 < t.y0 || r.y0 > t.y1));
+      if (collides) continue;
+      taken.push(r);
+      accepted.push(l);
+    }
+    for (const l of accepted) {
+      parts.push(
+        `<text x="${f1(l.x)}" y="${f1(l.y)}" font-size="7.5" font-family="monospace" fill="${l.ink}" paint-order="stroke" stroke="#F4F6F8" stroke-width="2.2" stroke-linejoin="round">${esc(l.text)}</text>`,
       );
     }
   }
@@ -767,14 +789,17 @@ function renderScaleBar(
       `<rect x="${f1(i * segGroundPx)}" y="0" width="${f1(segGroundPx)}" height="5" fill="${i % 2 === 1 ? "#0F172A" : "#FFFFFF"}" stroke="#0F172A" stroke-width="0.5"/>`,
     );
   }
-  // Ticks + labels at 0, ½, 1, 2, 3, 4 segment positions.
+  // Ticks + labels at 0, ½, 1, 2, 3, 4 segment positions — bare numbers on
+  // inner ticks, the unit only on the final label (atlas convention).
+  const km = segMetres >= 1000;
+  const num = (v: number) => (km ? v / 1000 : v).toLocaleString("en-US");
   const ticks: [number, string, "start" | "middle" | "end"][] = [
     [0, "0", "start"],
-    [half, segMetres >= 1000 ? `${(segMetres / 2000).toLocaleString("en-US")}` : `${(segMetres / 2).toLocaleString("en-US")}`, "middle"],
-    [segGroundPx, segLabel, "middle"],
-    [2 * segGroundPx, segMetres >= 1000 ? `${((2 * segMetres) / 1000).toLocaleString("en-US")}km` : `${(2 * segMetres).toLocaleString("en-US")}`, "middle"],
-    [3 * segGroundPx, segMetres >= 1000 ? `${((3 * segMetres) / 1000).toLocaleString("en-US")}km` : `${(3 * segMetres).toLocaleString("en-US")}`, "middle"],
-    [4 * segGroundPx, segMetres >= 1000 ? `${((4 * segMetres) / 1000).toLocaleString("en-US")}km` : `${(4 * segMetres).toLocaleString("en-US")}`, "end"],
+    [half, num(segMetres / 2), "middle"],
+    [segGroundPx, num(segMetres), "middle"],
+    [2 * segGroundPx, num(2 * segMetres), "middle"],
+    [3 * segGroundPx, num(3 * segMetres), "middle"],
+    [4 * segGroundPx, km ? `${num(4 * segMetres)} km` : `${num(4 * segMetres)} m`, "end"],
   ];
   for (const [tx, tv, anchor] of ticks) {
     out.push(`<text x="${f1(tx)}" y="-3" font-size="7.5" font-family="monospace" fill="#0F172A" text-anchor="${anchor}">${esc(tv)}</text>`);
@@ -935,7 +960,7 @@ function renderLocator(result: PipelineResult, el: ComposerLocator): string {
     out.push(`<text x="${f1(x0)}" y="${f1(y + 8)}" font-size="8" font-weight="700" fill="#475569" letter-spacing="0.5">${esc(el.title)}</text>`);
     y += 16;
   }
-  const frameH = h - (y - y0) - 14; // reserve a caption line
+  const frameH = h - (y - y0) - 22; // reserve caption line clear of grid edge labels
 
   // Feature extent: the adjusted boundary when present, else all surveyed points.
   let minE = Infinity, maxE = -Infinity, minN = Infinity, maxN = -Infinity;
@@ -1010,7 +1035,7 @@ function renderLocator(result: PipelineResult, el: ComposerLocator): string {
     ? `UTM zone ${model.zone.zone}${model.zone.south ? "S" : "N"}`
     : "grid coordinates (CRS not UTM)";
   out.push(
-    `<text x="${f1(x0)}" y="${f1(y + frameH + 11)}" font-size="6.5" font-family="monospace" fill="#64748B">100 km grid · ${esc(zoneTxt)} · extent box = parcel</text>`,
+    `<text x="${f1(x0)}" y="${f1(y + frameH + 18)}" font-size="6.5" font-family="monospace" fill="#64748B">${Math.round(model.step / 1000)} km grid · ${esc(zoneTxt)}</text>`,
   );
   out.push("</g>");
   return out.join("\n");

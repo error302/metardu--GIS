@@ -268,9 +268,10 @@ export function utmCentralMeridian(z: UtmZone): number {
 /* ------------------------------------------------------------------ */
 
 export interface LocatorModel {
-  /** 100 km grid eastings/northings to draw (metres). */
+  /** Grid lines to draw (metres) and their step. */
   eastings: number[];
   northings: number[];
+  step: number;
   /** Ground bbox of the grid window (metres). */
   window: { minE: number; maxE: number; minN: number; maxN: number };
   /** Parcel extent within the window (metres), or null. */
@@ -279,30 +280,35 @@ export interface LocatorModel {
 }
 
 /**
- * Build the 100 km grid window around a feature bbox: at least one grid
- * square of margin, snapped outward to the grid. No CRS? The same grid is
- * returned without a zone claim — still truthful, still useful.
+ * Build an adaptive locator grid around a feature bbox: the window spans
+ * roughly eight times the parcel diagonal (clamped to 20–300 km) so a small
+ * parcel is still visible as a box, not a dot. The grid step is picked from
+ * {5, 10, 20, 50, 100} km so the window carries a readable 2–6 squares.
+ * No CRS? The same grid is returned without a zone claim — still truthful.
  */
 export function buildLocatorModel(
   bbox: { minE: number; maxE: number; minN: number; maxN: number } | null,
   crs: string,
 ): LocatorModel | null {
   if (!bbox || !(bbox.maxE > bbox.minE) || !(bbox.maxN > bbox.minN)) return null;
-  const STEP = 100_000;
+  const diag = Math.hypot(bbox.maxE - bbox.minE, bbox.maxN - bbox.minN);
+  const target = Math.min(Math.max(diag * 8, 20_000), 300_000);
+  const STEPS = [5_000, 10_000, 20_000, 50_000, 100_000];
+  const step = STEPS.find((s) => target / s <= 6) ?? 100_000;
   const cx = (bbox.minE + bbox.maxE) / 2;
   const cy = (bbox.minN + bbox.maxN) / 2;
-  const half = Math.max(bbox.maxE - bbox.minE, bbox.maxN - bbox.minN); // ≥ 1 sq margin
+  const half = Math.max(target / 2, diag);
   const w = {
-    minE: Math.floor((cx - half) / STEP) * STEP,
-    maxE: Math.ceil((cx + half) / STEP) * STEP,
-    minN: Math.floor((cy - half) / STEP) * STEP,
-    maxN: Math.ceil((cy + half) / STEP) * STEP,
+    minE: Math.floor((cx - half) / step) * step,
+    maxE: Math.ceil((cx + half) / step) * step,
+    minN: Math.floor((cy - half) / step) * step,
+    maxN: Math.ceil((cy + half) / step) * step,
   };
   const eastings: number[] = [];
   const northings: number[] = [];
-  for (let e = w.minE; e <= w.maxE + 1; e += STEP) eastings.push(e);
-  for (let n = w.minN; n <= w.maxN + 1; n += STEP) northings.push(n);
-  return { eastings, northings, window: w, extent: bbox, zone: parseUtmZone(crs) };
+  for (let e = w.minE; e <= w.maxE + step / 2; e += step) eastings.push(e);
+  for (let n = w.minN; n <= w.maxN + step / 2; n += step) northings.push(n);
+  return { eastings, northings, step, window: w, extent: bbox, zone: parseUtmZone(crs) };
 }
 
 /* ------------------------------------------------------------------ */
