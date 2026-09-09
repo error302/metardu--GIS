@@ -8,13 +8,14 @@
  */
 
 import React, { useMemo, useRef, useState } from "react";
-import { Download, Printer, Save, FolderOpen, Eye, EyeOff } from "lucide-react";
+import { Download, Printer, Save, FolderOpen, Eye, EyeOff, Image } from "lucide-react";
 import { PipelineResult } from "../types/spatial";
 import {
   ComposerTemplate, ComposerElement, PageSizeKey, Orientation, pageDimsMm,
 } from "../core/composer/template";
 import { form4Preset, atlasPreset } from "../core/composer/presets";
 import { renderTemplate, validateSheetSvg } from "../core/composer/render";
+import { downloadSheetPng } from "../core/export/png-export";
 
 interface ComposerPanelProps {
   result: PipelineResult;
@@ -47,6 +48,7 @@ export const ComposerPanel: React.FC<ComposerPanelProps> = ({ result }) => {
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>("map");
   const [fitPreview, setFitPreview] = useState(true);
+  const [pngBusy, setPngBusy] = useState(false);
   const loadRef = useRef<HTMLInputElement>(null);
 
   const activeTemplate = useMemo<ComposerTemplate>(
@@ -405,6 +407,24 @@ export const ComposerPanel: React.FC<ComposerPanelProps> = ({ result }) => {
           <button onClick={downloadSvg} className="ui-btn w-full text-[12px]">
             <Download className="w-3.5 h-3.5" />
             <span>Download SVG</span>
+          </button>
+          <button
+            onClick={async () => {
+              setPngBusy(true);
+              try {
+                await downloadSheetPng(
+                  sheet.svg, sheet.widthPx, sheet.heightPx,
+                  `${template.id.replace("preset-", "")}_${result.metadata.title.replace(/\s+/g, "_")}_300dpi.png`,
+                );
+              } finally {
+                setPngBusy(false);
+              }
+            }}
+            disabled={pngBusy}
+            className="ui-btn w-full text-[12px]"
+          >
+            <Image className="w-3.5 h-3.5" />
+            <span>{pngBusy ? "Rasterising…" : "Download PNG · 300 DPI"}</span>
           </button>
           <button onClick={printSheet} className="ui-btn-accent w-full text-[12px]">
             <Printer className="w-3.5 h-3.5" />

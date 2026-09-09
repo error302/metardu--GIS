@@ -9,7 +9,8 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Download, Printer, RotateCcw, SlidersHorizontal, Loader2 } from "lucide-react";
+import { Download, Printer, RotateCcw, SlidersHorizontal, Loader2, Image as ImageIcon } from "lucide-react";
+import { downloadSheetPng } from "../core/export/png-export";
 import { PipelineResult, McdaWeights } from "../types/spatial";
 import { renderTemplate } from "../core/composer/render";
 import { atlasPreset } from "../core/composer/presets";
@@ -70,10 +71,11 @@ export const PlanningAtlasViewer: React.FC<PlanningAtlasViewerProps> = ({ result
     [weights],
   );
 
-  const svgXml = useMemo(
-    () => renderTemplate(atlasPreset(), effective, { mcdaWeights: weights }).svg,
+  const sheet = useMemo(
+    () => renderTemplate(atlasPreset(), effective, { mcdaWeights: weights }),
     [effective, weights],
   );
+  const svgXml = sheet.svg;
 
   // Live class distribution (from the effective state actually rendered).
   const dist = useMemo(() => {
@@ -98,6 +100,21 @@ export const PlanningAtlasViewer: React.FC<PlanningAtlasViewerProps> = ({ result
     }.svg`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const [pngBusy, setPngBusy] = useState(false);
+  const handleDownloadPng = async () => {
+    setPngBusy(true);
+    try {
+      await downloadSheetPng(
+        svgXml, sheet.widthPx, sheet.heightPx,
+        `Regional_Planning_Atlas_${result.metadata.title.replace(/\s+/g, "_")}${
+          weightsAdjusted ? "_sensitivity" : ""
+        }_300dpi.png`,
+      );
+    } finally {
+      setPngBusy(false);
+    }
   };
 
   const handlePrint = () => {
@@ -141,6 +158,10 @@ export const PlanningAtlasViewer: React.FC<PlanningAtlasViewerProps> = ({ result
           <button onClick={handleDownloadSvg} className="ui-btn-accent">
             <Download className="w-3.5 h-3.5" />
             <span>Download SVG</span>
+          </button>
+          <button onClick={handleDownloadPng} disabled={pngBusy} className="ui-btn">
+            <ImageIcon className="w-3.5 h-3.5" />
+            <span>{pngBusy ? "Rasterising…" : "PNG · 300 DPI"}</span>
           </button>
         </div>
       </div>
