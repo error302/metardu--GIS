@@ -25,6 +25,7 @@ import { PostgisPanel } from "./components/PostgisPanel";
 import { ProvenancePanel } from "./components/ProvenancePanel";
 import { TraversePanel } from "./components/TraversePanel";
 import { ScenarioComparePanel } from "./components/ScenarioComparePanel";
+import { SyncPanel } from "./components/SyncPanel";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
@@ -415,6 +416,19 @@ export const App: React.FC = () => {
         )}
         {activeTab === "scenarios" && (
           <ScenarioComparePanel result={pipelineResult} activeWeights={DEFAULT_MCDA_WEIGHTS} />
+        )}
+        {activeTab === "sync" && (
+          <SyncPanel
+            result={pipelineResult}
+            onApplyProject={(proj) =>
+              executePipeline(
+                { ...(selectedScenario as BenchmarkScenario), metadata: proj.metadata, points: [] },
+                proj.points,
+                "push",
+                `Edge sync merge: ${proj.projectName}`,
+              )
+            }
+          />
         )}
         {activeTab === "datagrid" && (
           <AttributeTable

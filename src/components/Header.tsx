@@ -20,6 +20,7 @@ import {
   Fingerprint,
   Crosshair,
   GitCompare,
+  Users,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
 import { CrsPicker } from "./CrsPicker";
@@ -38,7 +39,8 @@ export type ActiveTab =
   | "postgis"
   | "provenance"
   | "traverse"
-  | "scenarios";
+  | "scenarios"
+  | "sync";
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -94,6 +96,7 @@ const NAV_GROUPS: { label: string; items: { id: ActiveTab; label: string; icon: 
       { id: "datagrid", label: "Attribute Table", icon: Table2 },
       { id: "postgis", label: "PostGIS Link", icon: Database },
       { id: "provenance", label: "Provenance", icon: Fingerprint },
+      { id: "sync", label: "Edge Sync", icon: Users },
     ],
   },
 ];
