@@ -8,7 +8,8 @@ import {
   MousePointer2,
 } from "lucide-react";
 import { PipelineResult, SurveyPoint } from "../types/spatial";
-import { crsEpsgFromMetadata, toWGS84 } from "../core/crs";
+import { crsEpsgFromMetadata, toWGS84, fromWGS84 } from "../core/crs";
+import { TILE_PROVIDERS, TileService, tilesForViewport, TileProvider } from "../core/tiles";
 import { DEFAULT_LAYERS, LayerItem } from "../core/layer-store";
 import { LayerPanel } from "./LayerPanel";
 import { ToolboxPanel } from "./ToolboxPanel";
@@ -22,7 +23,16 @@ interface MapCanvas2DProps {
   onScaleChange?: (scaleDenominator: number) => void;
 }
 
-export type BasemapMode = "dark" | "satellite" | "viirs" | "cad";
+export type BasemapMode = "dark" | "osm" | "imagery" | "viirs" | "cad";
+
+/** Basemaps backed by live XYZ tiles (offline fallback to procedural below). */
+const TILE_BASEMAPS: Partial<Record<BasemapMode, TileProvider>> = {
+  osm: TILE_PROVIDERS.osm,
+  imagery: TILE_PROVIDERS["esri-imagery"],
+};
+
+/** Shared tile service — persistent Cache API + LRU + bounded concurrency. */
+const tileService = new TileService();
 
 /* Data palette — mirrors CSS tokens (color belongs to data, never chrome) */
 const C = {
@@ -46,7 +56,8 @@ const C = {
 
 const BASEMAP_BG: Record<BasemapMode, string> = {
   dark: "#161619",
-  satellite: "#15181a",
+  osm: "#e9e6e2", // light fallback tint for offline Streets mode
+  imagery: "#15181a",
   viirs: "#0a0a0d",
   cad: "#f7f7f5",
 };
@@ -96,6 +107,26 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   const [basemap, setBasemap] = useState<BasemapMode>("dark");
   const [layerItems, setLayerItems] = useState<LayerItem[]>(DEFAULT_LAYERS);
 
+  // Tile epoch — bumped (rAF-coalesced) when any requested tile decodes, so
+  // the static scene re-renders with the basemap tiles that just arrived.
+  const [tilesEpoch, setTilesEpoch] = useState(0);
+  const tilesEpochRef = useRef(0);
+  const tilesEpochRaf = useRef<number | null>(null);
+  useEffect(() => {
+    const unsub = tileService.onChange(() => {
+      tilesEpochRef.current += 1;
+      if (tilesEpochRaf.current !== null) return;
+      tilesEpochRaf.current = requestAnimationFrame(() => {
+        tilesEpochRaf.current = null;
+        setTilesEpoch(tilesEpochRef.current);
+      });
+    });
+    return () => {
+      unsub();
+      if (tilesEpochRaf.current !== null) cancelAnimationFrame(tilesEpochRaf.current);
+    };
+  }, []);
+
   const layerMap = useMemo(() => {
     const map: Record<string, LayerItem> = {};
     for (const l of layerItems) map[l.id] = l;
@@ -121,6 +152,8 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   );
 
   const isCad = basemap === "cad";
+  const tileProvider = TILE_BASEMAPS[basemap] ?? null;
+  const isOsmLight = basemap === "osm"; // light backdrop flips graticule/label ink
 
   // Stable signature of layer visibility for the static-cache key
   const layersSig = useMemo(() => JSON.stringify(layers), [layers]);
@@ -209,14 +242,52 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       n >= minVisN - viewPadWorld &&
       n <= maxVisN + viewPadWorld;
 
+    /* ---- Tile basemap view geometry (lon/lat bbox + ground meters/px) ---- */
+    let tileSpans: ReturnType<typeof tilesForViewport> = [];
+    let tileStats = { ready: 0, drawn: 0 };
+    if (tileProvider) {
+      try {
+        // Ground meters per screen pixel — measured, so it is CRS-independent
+        // (works for projected meters and for geographic degrees alike).
+        const wA = toWorldE(w / 2 - 50);
+        const wB = toWorldE(w / 2 + 50);
+        const midN = toWorldN(h / 2);
+        const [lonA, latA] = toWGS84(activeEpsg, wA, midN);
+        const [lonB, latB] = toWGS84(activeEpsg, wB, midN);
+        const dLat = ((latB - latA) * Math.PI) / 180;
+        const dLon = ((lonB - lonA) * Math.PI) / 180;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos((latA * Math.PI) / 180) * Math.cos((latB * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+        const meters = 2 * 6371008.8 * Math.asin(Math.min(1, Math.sqrt(a)));
+        const mpp = Math.abs(meters) / 100 || 1;
+        // Screen-corner lon/lat bbox (clamped to Web-Mercator latitude range)
+        const corners: [number, number][] = [
+          [toWorldE(0), toWorldN(0)],
+          [toWorldE(w), toWorldN(0)],
+          [toWorldE(0), toWorldN(h)],
+          [toWorldE(w), toWorldN(h)],
+        ];
+        let lonMin = Infinity, latMin = Infinity, lonMax = -Infinity, latMax = -Infinity;
+        for (const [e, n] of corners) {
+          const [lon, lat] = toWGS84(activeEpsg, e, n);
+          lonMin = Math.min(lonMin, lon); lonMax = Math.max(lonMax, lon);
+          latMin = Math.max(-85, Math.min(85, Math.min(latMin, lat)));
+          latMax = Math.max(-85, Math.min(85, Math.max(latMax, lat)));
+        }
+        tileSpans = tilesForViewport(tileProvider, mpp, [lonMin, latMin, lonMax, latMax]);
+      } catch {
+        tileSpans = [];
+      }
+    }
+
     /* ---- Static scene: sections 1–10 depend only on view/basemap/layers/result ---- */
     function renderStatic(sctx: CanvasRenderingContext2D, sw: number, sh: number) {
       const ctx = sctx;
 
-      /* 1. Basemap */
+      /* 1. Basemap — procedural fill first (also the offline fallback), then
+            live XYZ tiles drawn on top where they have decoded. */
       ctx.fillStyle = BASEMAP_BG[basemap];
       ctx.fillRect(0, 0, sw, sh);
-      if (basemap === "satellite") {
+      if (basemap === "imagery") {
         ctx.fillStyle = "rgba(38, 66, 48, 0.16)";
         ctx.fillRect(0, 0, sw, sh);
       } else if (basemap === "viirs") {
@@ -227,13 +298,38 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
         ctx.fillRect(0, 0, sw, sh);
       }
 
+      if (tileProvider && tileSpans.length > 0) {
+        ctx.imageSmoothingEnabled = true;
+        for (const span of tileSpans) {
+          const img = tileService.request(tileProvider, span.z, span.x, span.y);
+          if (!img) continue; // in-flight/failed — procedural shows through
+          // Reproject the tile's NW/SE corners into the working CRS and draw
+          // into that screen rect. Over one 256px tile the residual CRS
+          // curvature is sub-pixel at survey scales.
+          const [eNW, nNW] = fromWGS84(activeEpsg, span.nw.lon, span.nw.lat);
+          const [eSE, nSE] = fromWGS84(activeEpsg, span.se.lon, span.se.lat);
+          const sx = toScreenX(eNW);
+          const sy = toScreenY(nNW);
+          const tw = toScreenX(eSE) - sx;
+          const th = toScreenY(nSE) - sy;
+          if (tw <= 0 || th <= 0 || tw > sw * 8 || th > sh * 8) continue;
+          ctx.drawImage(img, sx, sy, tw, th);
+          tileStats.drawn++;
+        }
+        tileStats.ready = tileStats.drawn;
+      }
+
       /* 2. Graticule — powers-of-ten grid, mono labels with collision spacing */
       const graticuleStep = Math.max(10, Math.pow(10, Math.floor(Math.log10(160 / zoom))));
 
     ctx.lineWidth = 0.5;
-    ctx.strokeStyle = isCad ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.045)";
+    ctx.strokeStyle = isCad
+      ? "rgba(0,0,0,0.08)"
+      : isOsmLight
+        ? "rgba(40,40,46,0.20)"
+        : "rgba(255,255,255,0.045)";
     ctx.font = "9px 'IBM Plex Mono', monospace";
-    ctx.fillStyle = isCad ? "#8a8a90" : "#5b5b62";
+    ctx.fillStyle = isCad ? "#8a8a90" : isOsmLight ? "#52525a" : "#5b5b62";
 
     // Draw edge labels only when they have generous breathing room
     let lastELabelX = -Infinity;
@@ -495,7 +591,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
        Heavy layers re-stroke only when the view, basemap, layer set, or
        document changes; every other redraw (selection, hover, label state)
        blits the cached scene and repaints the cheap dynamic pass. */
-    const sig = `${zoom.toFixed(4)}|${pan.x.toFixed(2)}|${pan.y.toFixed(2)}|${basemap}|${layersSig}`;
+    const sig = `${zoom.toFixed(4)}|${pan.x.toFixed(2)}|${pan.y.toFixed(2)}|${basemap}|${layersSig}|${tilesEpoch}|${activeEpsg}`;
     let sc = staticCanvasRef.current;
     if (!sc) {
       sc = document.createElement("canvas");
@@ -513,6 +609,26 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
         sctx.clearRect(0, 0, sc.width, sc.height);
         sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         renderStatic(sctx, w, h);
+
+        /* Tile attribution / connectivity note — drawn into the static scene
+           last, pinned lower-right like a proper cartographic credit line. */
+        if (tileProvider) {
+          const credit =
+            tileStats.drawn > 0
+              ? tileProvider.attribution
+              : typeof navigator !== "undefined" && navigator.onLine === false
+                ? "OFFLINE — vector basemap fallback"
+                : `loading ${tileProvider.label}…`;
+          sctx.font = "8.5px 'IBM Plex Mono', monospace";
+          sctx.textAlign = "right";
+          sctx.lineWidth = 2.5;
+          sctx.lineJoin = "round";
+          sctx.strokeStyle = isOsmLight ? "rgba(255,255,255,0.8)" : "rgba(0,0,0,0.6)";
+          sctx.strokeText(credit, w - 14, h - 10);
+          sctx.fillStyle = isOsmLight ? "#4b4b52" : "rgba(232,232,234,0.72)";
+          sctx.fillText(credit, w - 14, h - 10);
+          sctx.textAlign = "center";
+        }
       }
       staticSigRef.current = sig;
       staticResultRef.current = result;
@@ -590,6 +706,22 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
 
     ctx.textAlign = "center";
 
+    /* Over raster tiles, labels get a contrasting halo so the decluttered
+       text stays readable on light streets and dark aerial imagery alike. */
+    const labelHalo = tileProvider ? (isOsmLight ? "rgba(255,255,255,0.82)" : "rgba(0,0,0,0.62)") : null;
+    const drawHaloText = (text: string, x: number, y: number, fill: string) => {
+      if (labelHalo) {
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = labelHalo;
+        ctx.strokeText(text, x, y);
+      }
+      ctx.fillStyle = fill;
+      ctx.fillText(text, x, y);
+    };
+    const inkBadge = isCad ? "#3a3a40" : isOsmLight ? "#26262b" : C.ink;
+    const inkLabel = isCad ? "#3a3a40" : isOsmLight ? "#3f3f46" : C.ink2;
+
     /* P1 — bearing & distance badges */
     if (layers.boundary && layers.bearings && result.boundary) {
       const b = result.boundary;
@@ -619,7 +751,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
         ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = isCad ? "#3a3a40" : C.ink;
+        ctx.fillStyle = inkBadge;
         ctx.fillText(bd.bearingDms, px, py - 1.5);
         ctx.fillStyle = C.boundary;
         ctx.fillText(`${bd.distanceM.toFixed(1)} m`, px, py + 8);
@@ -650,8 +782,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
         if (!tryPlace(sx + 6 + lw / 2, sy - 7, lw + 10, 12)) continue;
 
         ctx.textAlign = "left";
-        ctx.fillStyle = isSelected ? C.selected : isCad ? "#3a3a40" : C.ink2;
-        ctx.fillText(pt.id, sx + 6, sy - 4);
+        drawHaloText(pt.id, sx + 6, sy - 4, isSelected ? C.selected : inkLabel);
         ctx.textAlign = "center";
       }
     }
@@ -666,8 +797,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
         const ly = toScreenY(midPt[1]);
         const text = `${c.elevation} m`;
         if (!tryPlace(lx, ly, 40, 12)) continue;
-        ctx.fillStyle = isCad ? "#8a6a3a" : C.contourMajor;
-        ctx.fillText(text, lx, ly - 3);
+        drawHaloText(text, lx, ly - 3, isCad ? "#8a6a3a" : isOsmLight ? "#7a5a28" : C.contourMajor);
       }
     }
 
@@ -714,8 +844,9 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     /* North arrow — minimal, bottom-right */
     ctx.save();
     ctx.translate(w - 28, h - 78);
-    ctx.strokeStyle = isCad ? "#3a3a40" : C.ink2;
-    ctx.fillStyle = isCad ? "#3a3a40" : C.ink2;
+    const furnitureInk = isCad ? "#3a3a40" : isOsmLight ? "#3f3f46" : C.ink2;
+    ctx.strokeStyle = furnitureInk;
+    ctx.fillStyle = furnitureInk;
     ctx.lineWidth = 1;
     // needle
     ctx.beginPath();
@@ -747,14 +878,19 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     if (barPx > 20) {
       const bx = 16;
       const by = h - 26;
+      const barInk = isCad ? "#3a3a40" : isOsmLight ? "#26262b" : C.ink;
       ctx.save();
       // alternating fills
-      ctx.fillStyle = isCad ? "#3a3a40" : C.ink;
+      ctx.fillStyle = barInk;
       ctx.fillRect(bx, by, barPx / 2, 3);
-      ctx.fillStyle = isCad ? "rgba(58,58,64,0.25)" : "rgba(232,232,234,0.35)";
+      ctx.fillStyle = isCad
+        ? "rgba(58,58,64,0.25)"
+        : isOsmLight
+          ? "rgba(38,38,43,0.28)"
+          : "rgba(232,232,234,0.35)";
       ctx.fillRect(bx + barPx / 2, by, barPx / 2, 3);
       // end ticks
-      ctx.fillStyle = isCad ? "#3a3a40" : C.ink;
+      ctx.fillStyle = barInk;
       ctx.fillRect(bx, by - 2, 1, 7);
       ctx.fillRect(bx + barPx, by - 2, 1, 7);
       ctx.font = "9px 'IBM Plex Mono', monospace";
@@ -766,7 +902,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       ctx.fillText(`${barM} m`, bx + barPx + 2, by - 5);
       ctx.restore();
     }
-  }, [zoom, pan, basemap, layers, layersSig, result, selectedPointIds, isCad, resizeTick]);
+  }, [zoom, pan, basemap, layers, layersSig, result, selectedPointIds, isCad, isOsmLight, tileProvider, tilesEpoch, activeEpsg, resizeTick]);
 
   /* ---------------- Interactions ---------------- */
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -866,7 +1002,8 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
 
   const basemapOptions: { id: BasemapMode; label: string }[] = [
     { id: "dark", label: "Dark" },
-    { id: "satellite", label: "Aerial" },
+    { id: "osm", label: "Streets" },
+    { id: "imagery", label: "Aerial" },
     { id: "viirs", label: "Night" },
     { id: "cad", label: "CAD" },
   ];
