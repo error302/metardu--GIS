@@ -7,7 +7,9 @@ import { exportToLandXml } from "../exporters/landxml-exporter";
 import { renderTemplate } from "../core/composer/render";
 import { form4Preset, atlasPreset } from "../core/composer/presets";
 import { exportGpkg } from "../core/export/gpkg-writer";
+import { buildLodgementPackage } from "../core/export/lodgement";
 import { ensureGpkgBrowserLoader } from "../core/ingest/gpkg-browser";
+import { Package } from "lucide-react";
 
 interface ExportHubModalProps {
   result: PipelineResult;
@@ -103,6 +105,16 @@ export const ExportHubModal: React.FC<ExportHubModalProps> = ({ result, onClose 
             format="GeoPackage (.gpkg)"
             description={gpkgError ? `Export failed: ${gpkgError}` : "OGC SQLite container — beacons, vectors, boundary with attributes."}
             onDownload={downloadGpkg}
+          />
+          <ExportRow
+            icon={Package}
+            format="Lodgement Package (.zip)"
+            description="One-click registry bundle — LandXML + provenance + schedules + Form 4 plan."
+            onDownload={() => {
+              const pkg = buildLodgementPackage(result);
+              const ab = pkg.bytes.buffer.slice(pkg.bytes.byteOffset, pkg.bytes.byteOffset + pkg.bytes.byteLength) as ArrayBuffer;
+              downloadFile(new Blob([ab]), pkg.filename, "application/zip");
+            }}
           />
           <ExportRow
             icon={FileCode}

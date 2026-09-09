@@ -22,6 +22,7 @@ import { initGeoidModel, subscribeGeoidStatus, GeoidStatus } from "./core/geoid/
 import { ComposerPanel } from "./components/ComposerPanel";
 import { PostgisPanel } from "./components/PostgisPanel";
 import { ProvenancePanel } from "./components/ProvenancePanel";
+import { TraversePanel } from "./components/TraversePanel";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
@@ -404,6 +405,12 @@ export const App: React.FC = () => {
           <PostgisPanel onImportPoints={handlePostgisImport} />
         )}
         {activeTab === "provenance" && <ProvenancePanel result={pipelineResult} />}
+        {activeTab === "traverse" && (
+          <TraversePanel
+            result={pipelineResult}
+            onApplyPoints={(pts) => executePipeline(selectedScenario, pts, "push", "Apply adjusted traverse")}
+          />
+        )}
         {activeTab === "datagrid" && (
           <AttributeTable
             result={pipelineResult}
