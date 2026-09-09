@@ -19,6 +19,7 @@ import {
   Database,
   Fingerprint,
   Crosshair,
+  GitCompare,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
 import { CrsPicker } from "./CrsPicker";
@@ -36,7 +37,8 @@ export type ActiveTab =
   | "datagrid"
   | "postgis"
   | "provenance"
-  | "traverse";
+  | "traverse"
+  | "scenarios";
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -75,6 +77,7 @@ const NAV_GROUPS: { label: string; items: { id: ActiveTab; label: string; icon: 
       { id: "mcda", label: "Suitability (MCDA)", icon: SlidersHorizontal },
       { id: "hazards", label: "Hazard Audit", icon: ShieldAlert },
       { id: "energy", label: "Electrification", icon: Zap },
+      { id: "scenarios", label: "Scenario Compare", icon: GitCompare },
     ],
   },
   {

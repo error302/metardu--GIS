@@ -19,10 +19,12 @@ import { transform, transformFromDef, crsEpsgFromMetadata, getCRS, registerCrsDe
 import { createProjectSnapshot, downloadProjectFile, parseProjectFile } from "./core/project";
 import { useHistoryState } from "./hooks/use-history";
 import { initGeoidModel, subscribeGeoidStatus, GeoidStatus } from "./core/geoid/grid";
+import { DEFAULT_MCDA_WEIGHTS } from "./core/mcda-suitability";
 import { ComposerPanel } from "./components/ComposerPanel";
 import { PostgisPanel } from "./components/PostgisPanel";
 import { ProvenancePanel } from "./components/ProvenancePanel";
 import { TraversePanel } from "./components/TraversePanel";
+import { ScenarioComparePanel } from "./components/ScenarioComparePanel";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
@@ -410,6 +412,9 @@ export const App: React.FC = () => {
             result={pipelineResult}
             onApplyPoints={(pts) => executePipeline(selectedScenario, pts, "push", "Apply adjusted traverse")}
           />
+        )}
+        {activeTab === "scenarios" && (
+          <ScenarioComparePanel result={pipelineResult} activeWeights={DEFAULT_MCDA_WEIGHTS} />
         )}
         {activeTab === "datagrid" && (
           <AttributeTable

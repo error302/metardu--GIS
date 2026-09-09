@@ -7,8 +7,9 @@
  * The engine has no access to any metric it cannot derive from `result`.
  */
 
-import { PipelineResult, SurveyVector } from "../../types/spatial";
+import { PipelineResult, SurveyVector, McdaWeights } from "../../types/spatial";
 import { getGeoidProvenance } from "../crs";
+import { DEFAULT_MCDA_WEIGHTS } from "../mcda-suitability";
 import { buildProvenanceGraph, provenanceCompactRows } from "../provenance";
 import {
   ComposerElement, ComposerMapFrame, ComposerTable, ResolveContext,
@@ -24,6 +25,12 @@ export interface RenderedSheet {
   heightMm: number;
   widthPx: number;
   heightPx: number;
+}
+
+/** Optional render-time context (decision-document sensitivity disclosure). */
+export interface RenderOptions {
+  /** Active MCDA weights — disclosed in the method & limitations note. */
+  mcdaWeights?: McdaWeights;
 }
 
 /* ------------------------------------------------------------------ */
@@ -641,7 +648,11 @@ function renderScaleBar(
   return out.join("\n");
 }
 
-function renderMethodNote(result: PipelineResult, el: Extract<ComposerElement, { kind: "method-note" }>): string {
+function renderMethodNote(
+  result: PipelineResult,
+  el: Extract<ComposerElement, { kind: "method-note" }>,
+  options?: RenderOptions,
+): string {
   const ctx = buildResolveContext(result);
   const w = el.w * PX_PER_MM;
   const lines: string[] = [];
@@ -652,12 +663,27 @@ function renderMethodNote(result: PipelineResult, el: Extract<ComposerElement, {
   );
   if (result.suitability.length > 0) {
     lines.push(`Suitability: weighted overlay (slope, road proximity, riparian setback) on a ${ctx.computed.gridDims}.`);
+    if (options?.mcdaWeights) {
+      const w8 = options.mcdaWeights;
+      const adjusted =
+        w8.slopeWeight !== DEFAULT_MCDA_WEIGHTS.slopeWeight ||
+        w8.roadAccessWeight !== DEFAULT_MCDA_WEIGHTS.roadAccessWeight ||
+        w8.waterBufferWeight !== DEFAULT_MCDA_WEIGHTS.waterBufferWeight ||
+        w8.socialInfraWeight !== DEFAULT_MCDA_WEIGHTS.socialInfraWeight;
+      lines.push(
+        `MCDA weights: slope ${w8.slopeWeight} · road ${w8.roadAccessWeight} · water ${w8.waterBufferWeight} · infra ${w8.socialInfraWeight}` +
+        (adjusted ? " — user-adjusted for sensitivity review; digest reflects this state." : " — document defaults."),
+      );
+    }
   }
   if (result.hazardSinks.length > 0) {
-    lines.push("Hazard: inundation sinks delineated from TIN low-point drainage; exposure scored by 2D distance to sink.");
+    lines.push("Hazard: inundation sinks delineated from TIN low-point drainage; exposure scored by 2D distance to sink. Screening only — not a rainfall-runoff forecast.");
   }
   if (result.energyClusters.length > 0) {
     lines.push("Electrification: SE4All / ESMAP multi-tier techno-economic sizing; costs are planning-level estimates.");
+  }
+  if (result.boundary) {
+    lines.push(`Uncertainty: parcel figures bounded by traverse precision 1:${result.boundary.precisionRatio.toLocaleString("en-US")} (${result.boundary.precisionRating}); planimetric, no slope correction.`);
   }
   lines.push(`All figures computed from ${result.points.length} surveyed features; none are hard-coded.`);
   const h = 24 + lines.length * 13;
@@ -759,7 +785,7 @@ function renderText(el: Extract<ComposerElement, { kind: "text" }>): string {
 /* Sheet assembly                                                      */
 /* ------------------------------------------------------------------ */
 
-export function renderTemplate(template: ComposerTemplate, result: PipelineResult): RenderedSheet {
+export function renderTemplate(template: ComposerTemplate, result: PipelineResult, options?: RenderOptions): RenderedSheet {
   const dims = pageDimsMm(template.page);
   const W = dims.w * PX_PER_MM;
   const H = dims.h * PX_PER_MM;
@@ -802,7 +828,7 @@ export function renderTemplate(template: ComposerTemplate, result: PipelineResul
       case "legend": body.push(renderLegend(result, el)); break;
       case "north-arrow": body.push(renderNorthArrow(el)); break;
       case "scale-bar": body.push(renderScaleBar(el, frameRes)); break;
-      case "method-note": body.push(renderMethodNote(result, el)); break;
+      case "method-note": body.push(renderMethodNote(result, el, options)); break;
       case "title-block": body.push(renderTitleBlock(result, el)); break;
       case "certification": body.push(renderCertification(result, el)); break;
       case "approval-stamp": body.push(renderApprovalStamp(result, el)); break;
