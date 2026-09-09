@@ -1,8 +1,14 @@
 /**
  * Delaunay Triangulation (TIN) & 3D Surface Engine
  * Computes non-overlapping triangle meshes, face normal vectors, slope gradients, and cut/fill volumes.
+ *
+ * Triangulation uses the sweep-hull Delaunay algorithm (delaunator, O(n) in
+ * practice) — the previous ad-hoc Bowyer-Watson loop was O(n²) and dominated
+ * the 50k-point pipeline (>100 s). Face metrics, volumes, and the TinMesh
+ * contract are unchanged.
  */
 
+import Delaunator from "delaunator";
 import { SurveyPoint, TinTriangle, TinMesh } from "../types/spatial";
 
 export function generateTinMesh(points: SurveyPoint[], datumElevation?: number): TinMesh {
@@ -34,8 +40,8 @@ export function generateTinMesh(points: SurveyPoint[], datumElevation?: number):
 
   const datum = datumElevation ?? Number(((minZ + maxZ) / 2).toFixed(2));
 
-  // Bowyer-Watson 2D Delaunay Triangulation
-  const triangles = bowyerWatsonDelaunay(points, minX, maxX, minY, maxY);
+  // Sweep-hull 2D Delaunay Triangulation
+  const triangles = triangulateDelaunay(points);
 
   let totalSlope = 0;
   let totalCut = 0;
@@ -70,89 +76,44 @@ export function generateTinMesh(points: SurveyPoint[], datumElevation?: number):
   };
 }
 
-interface SuperTriangle {
-  p1: SurveyPoint;
-  p2: SurveyPoint;
-  p3: SurveyPoint;
-}
-
-function bowyerWatsonDelaunay(
-  points: SurveyPoint[],
-  minX: number,
-  maxX: number,
-  minY: number,
-  maxY: number
-): TinTriangle[] {
-  const dx = maxX - minX || 100;
-  const dy = maxY - minY || 100;
-  const deltaMax = Math.max(dx, dy) * 20;
-  const midX = (minX + maxX) / 2;
-  const midY = (minY + maxY) / 2;
-
-  // Super-triangle enclosing all points
-  const stP1: SurveyPoint = { id: "_st1", easting: midX - deltaMax, northing: midY - deltaMax, elevation: 0, rawCode: "", category: "terrain", description: "" };
-  const stP2: SurveyPoint = { id: "_st2", easting: midX, northing: midY + deltaMax * 1.5, elevation: 0, rawCode: "", category: "terrain", description: "" };
-  const stP3: SurveyPoint = { id: "_st3", easting: midX + deltaMax, northing: midY - deltaMax, elevation: 0, rawCode: "", category: "terrain", description: "" };
-
-  type Tri = { p1: SurveyPoint; p2: SurveyPoint; p3: SurveyPoint };
-  let triList: Tri[] = [{ p1: stP1, p2: stP2, p3: stP3 }];
-
-  for (const pt of points) {
-    const polygonEdges: [SurveyPoint, SurveyPoint][] = [];
-    const badTriangles: Tri[] = [];
-
-    for (const tri of triList) {
-      if (inCircumcircle(pt, tri.p1, tri.p2, tri.p3)) {
-        badTriangles.push(tri);
-      }
-    }
-
-    // Find boundary edges of the polygonal hole
-    for (const tri of badTriangles) {
-      const edges: [SurveyPoint, SurveyPoint][] = [
-        [tri.p1, tri.p2],
-        [tri.p2, tri.p3],
-        [tri.p3, tri.p1],
-      ];
-
-      for (const [e1, e2] of edges) {
-        let isShared = false;
-        for (const other of badTriangles) {
-          if (other === tri) continue;
-          if (hasEdge(other, e1, e2)) {
-            isShared = true;
-            break;
-          }
-        }
-        if (!isShared) {
-          polygonEdges.push([e1, e2]);
-        }
-      }
-    }
-
-    // Remove bad triangles
-    triList = triList.filter((t) => !badTriangles.includes(t));
-
-    // Form new triangles from point to edges
-    for (const [e1, e2] of polygonEdges) {
-      triList.push({ p1: e1, p2: e2, p3: pt });
+/**
+ * Sweep-hull Delaunay triangulation (delaunator). Returns TinTriangle faces
+ * with the same metric payloads the legacy Bowyer-Watson path produced.
+ */
+function triangulateDelaunay(points: SurveyPoint[]): TinTriangle[] {
+  // Dedupe coincident coordinates — delaunator tolerates duplicates but the
+  // degenerate faces would waste downstream work. First occurrence wins.
+  const coordIndex = new Map<string, number>();
+  const representative: number[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const key = `${points[i].easting}|${points[i].northing}`;
+    if (!coordIndex.has(key)) {
+      coordIndex.set(key, representative.length);
+      representative.push(i);
     }
   }
 
-  // Remove triangles that share vertices with the super-triangle
+  const coords = new Float64Array(representative.length * 2);
+  for (let i = 0; i < representative.length; i++) {
+    const pt = points[representative[i]];
+    coords[i * 2] = pt.easting;
+    coords[i * 2 + 1] = pt.northing;
+  }
+
+  const delaunay = new Delaunator(coords);
+  const tri = delaunay.triangles;
+
   const finalTriangles: TinTriangle[] = [];
-  const superIds = new Set(["_st1", "_st2", "_st3"]);
+  for (let t = 0; t < tri.length; t += 3) {
+    const p1 = points[representative[tri[t]]];
+    const p2 = points[representative[tri[t + 1]]];
+    const p3 = points[representative[tri[t + 2]]];
 
-  for (const tri of triList) {
-    if (superIds.has(tri.p1.id) || superIds.has(tri.p2.id) || superIds.has(tri.p3.id)) {
-      continue;
-    }
-
-    const metrics = computeTriangleFaceMetrics(tri.p1, tri.p2, tri.p3);
+    const metrics = computeTriangleFaceMetrics(p1, p2, p3);
     finalTriangles.push({
-      p1: tri.p1,
-      p2: tri.p2,
-      p3: tri.p3,
+      p1,
+      p2,
+      p3,
       normal: metrics.normal,
       slopePercent: metrics.slopePercent,
       aspectDeg: metrics.aspectDeg,
@@ -160,29 +121,6 @@ function bowyerWatsonDelaunay(
   }
 
   return finalTriangles;
-}
-
-function hasEdge(tri: { p1: SurveyPoint; p2: SurveyPoint; p3: SurveyPoint }, e1: SurveyPoint, e2: SurveyPoint): boolean {
-  const pts = [tri.p1.id, tri.p2.id, tri.p3.id];
-  return pts.includes(e1.id) && pts.includes(e2.id);
-}
-
-function inCircumcircle(p: SurveyPoint, a: SurveyPoint, b: SurveyPoint, c: SurveyPoint): boolean {
-  const ax = a.easting - p.easting;
-  const ay = a.northing - p.northing;
-  const bx = b.easting - p.easting;
-  const by = b.northing - p.northing;
-  const cx = c.easting - p.easting;
-  const cy = c.northing - p.northing;
-
-  const det =
-    (ax * ax + ay * ay) * (bx * cy - cx * by) -
-    (bx * bx + by * by) * (ax * cy - cx * ay) +
-    (cx * cx + cy * cy) * (ax * by - bx * ay);
-
-  // Counter-clockwise check
-  const ccw = (b.easting - a.easting) * (c.northing - a.northing) - (b.northing - a.northing) * (c.easting - a.easting);
-  return ccw > 0 ? det > 0 : det < 0;
 }
 
 function computeTriangleFaceMetrics(p1: SurveyPoint, p2: SurveyPoint, p3: SurveyPoint): {

@@ -16,6 +16,8 @@ export function auditHazardExposure(
   // Find local minima across vertices
   const localMinima: SurveyPoint[] = [];
   const vertexNeighbors: Map<string, SurveyPoint[]> = new Map();
+  // O(V) id -> vertex lookup (the legacy vertices.find() scan made this O(V²))
+  const vertexById: Map<string, SurveyPoint> = new Map(tin.vertices.map((v) => [v.id, v]));
 
   for (const tri of tin.triangles) {
     for (const [v1, v2] of [[tri.p1, tri.p2], [tri.p2, tri.p3], [tri.p3, tri.p1]]) {
@@ -25,7 +27,7 @@ export function auditHazardExposure(
   }
 
   for (const [id, neighbors] of vertexNeighbors.entries()) {
-    const pt = tin.vertices.find((p) => p.id === id);
+    const pt = vertexById.get(id);
     if (!pt) continue;
 
     const isLowest = neighbors.every((n) => n.elevation >= pt.elevation);

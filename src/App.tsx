@@ -11,47 +11,73 @@ import { PlanningAtlasViewer } from "./components/PlanningAtlasViewer";
 import { AttributeTable } from "./components/AttributeTable";
 import { ExportHubModal } from "./components/ExportHubModal";
 import { BENCHMARK_SCENARIOS, BenchmarkScenario } from "./data/sample-surveys";
-import { runAutonomousGisPipeline } from "./core/pipeline";
+import { pipelineService, PipelineProgressEvent } from "./core/pipeline-client";
+import { ingestFiles } from "./core/ingest";
 import { PipelineResult, SurveyPoint } from "./types/spatial";
 import { transform, crsEpsgFromMetadata, getCRS } from "./core/crs";
 import { createProjectSnapshot, downloadProjectFile, parseProjectFile } from "./core/project";
+import { useHistoryState } from "./hooks/use-history";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
   const [selectedScenario, setSelectedScenario] = useState<BenchmarkScenario>(BENCHMARK_SCENARIOS[0]);
-  const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(null);
   const [selectedPointIds, setSelectedPointIds] = useState<string[]>([]);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [progress, setProgress] = useState<{ pct: number; stage: string } | null>(null);
+
+  // Single immutable document with a bounded undo/redo command stack
+  const doc = useHistoryState<PipelineResult | null>(null, "Workspace opened");
+  const pipelineResult = doc.state;
 
   // Live view state reported by the 2D canvas into the global status bar
   const [cursor, setCursor] = useState<CursorReadout | null>(null);
   const [scaleDenominator, setScaleDenominator] = useState(1000);
 
-  // Execute pipeline for scenario
-  const executePipeline = async (scenario: BenchmarkScenario, customPoints?: SurveyPoint[]) => {
+  /**
+   * Execute the pipeline through the worker service (main-thread fallback
+   * transparent). mode "reset" starts a new document; "push" records an
+   * undoable command.
+   */
+  const executePipeline = async (
+    scenario: BenchmarkScenario,
+    customPoints?: SurveyPoint[] | string,
+    mode: "push" | "reset" = "push",
+    label = "Run pipeline"
+  ) => {
     setIsLoading(true);
-    const pts = customPoints || scenario.points;
-    const res = await runAutonomousGisPipeline(pts, scenario.metadata);
-    setPipelineResult(res);
-    setIsLoading(false);
+    setProgress({ pct: 0, stage: "Queued" });
+    try {
+      const res = await pipelineService.run(customPoints ?? scenario.points, scenario.metadata, {
+        onProgress: (p: PipelineProgressEvent) =>
+          setProgress({ pct: Math.round((p.step / p.totalSteps) * 100), stage: p.stage }),
+      });
+      if (mode === "reset") doc.reset(res, label);
+      else doc.push(res, label);
+    } catch (err: any) {
+      alert(`Pipeline failed: ${err?.message ?? err}`);
+    } finally {
+      setIsLoading(false);
+      setProgress(null);
+    }
   };
 
-  // Run on initial mount
+  // Initial load — opens a fresh document (not an undoable command)
   useEffect(() => {
-    executePipeline(selectedScenario);
+    executePipeline(selectedScenario, undefined, "reset", "Workspace opened");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleScenarioChange = (scenario: BenchmarkScenario) => {
     setSelectedScenario(scenario);
-    executePipeline(scenario);
+    executePipeline(scenario, undefined, "reset", `Open scenario: ${scenario.title}`);
   };
 
   const handleRunPipeline = () => {
     if (pipelineResult) {
-      executePipeline(selectedScenario, pipelineResult.points);
+      executePipeline(selectedScenario, pipelineResult.points, "push", "Re-run pipeline");
     } else {
-      executePipeline(selectedScenario);
+      executePipeline(selectedScenario, undefined, "reset", "Run pipeline");
     }
   };
 
@@ -76,7 +102,9 @@ export const App: React.FC = () => {
         },
         points: [],
       },
-      text as any
+      text as any,
+      "reset",
+      "Ingest pasted survey"
     );
   };
 
@@ -103,7 +131,12 @@ export const App: React.FC = () => {
       crs: newCrsName,
     };
 
-    executePipeline({ ...selectedScenario, metadata: updatedMetadata }, reprojectedPoints);
+    executePipeline(
+      { ...selectedScenario, metadata: updatedMetadata },
+      reprojectedPoints,
+      "push",
+      `Reproject to ${newCrsName}`
+    );
   };
 
   const handleSaveProject = () => {
@@ -124,10 +157,46 @@ export const App: React.FC = () => {
           metadata: proj.metadata,
           points: proj.points,
         },
-        proj.points
+        proj.points,
+        "reset",
+        `Open project: ${proj.projectName}`
       );
     } catch (err: any) {
       alert(`Could not load project: ${err.message}`);
+    }
+  };
+
+  const handleImportFiles = async (files: File[]) => {
+    setIsLoading(true);
+    setProgress({ pct: 0, stage: "Reading files" });
+    try {
+      const result = await ingestFiles(files);
+      const importedMetadata = {
+        id: "IMPORT-01",
+        title: result.layerName,
+        locality: "Imported dataset",
+        country: "—",
+        crs: "Arc 1960 / UTM zone 37S",
+        surveyorName: "Imported source",
+        registrationNo: "IMPORT",
+        date: new Date().toISOString().split("T")[0],
+        scale: "1:1,000",
+        organization: "MetaRDU GIS Workstation",
+      };
+      await executePipeline(
+        { ...(selectedScenario as BenchmarkScenario), metadata: importedMetadata, points: [] },
+        result.points,
+        "reset",
+        `Import: ${result.layerName}`
+      );
+      if (result.warnings.length > 0) {
+        alert(`Imported with notes:\n\n${result.warnings.join("\n")}`);
+      }
+    } catch (err: any) {
+      alert(`Import failed: ${err?.message ?? err}`);
+    } finally {
+      setIsLoading(false);
+      setProgress(null);
     }
   };
 
@@ -139,7 +208,7 @@ export const App: React.FC = () => {
       <div className="w-screen h-screen bg-app flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-          <span className="ui-label">Initializing workspace</span>
+          <span className="ui-label">{progress ? `${progress.stage}…` : "Initializing workspace"}</span>
         </div>
       </div>
     );
@@ -163,13 +232,31 @@ export const App: React.FC = () => {
         onCrsChange={handleCrsChange}
         onSaveProject={handleSaveProject}
         onOpenProjectFile={handleOpenProjectFile}
+        onImportFiles={handleImportFiles}
+        onUndo={doc.undo}
+        onRedo={doc.redo}
+        canUndo={doc.canUndo}
+        canRedo={doc.canRedo}
+        undoLabel={doc.undoLabel}
+        redoLabel={doc.redoLabel}
       />
 
       {/* Workspace */}
       <main className="flex-1 min-h-0 relative overflow-hidden">
-        {isLoading && (
-          <div className="absolute inset-x-0 top-0 h-0.5 z-50 overflow-hidden">
-            <div className="h-full w-1/3 bg-accent animate-[pipeline_0.9s_ease-in-out_infinite]" />
+        {isLoading && progress && (
+          <div
+            className="absolute inset-x-0 top-0 z-50 flex items-center gap-2 bg-panel border-b border-line px-3 h-6"
+            title={`Pipeline stage ${progress.pct}%`}
+          >
+            <div className="flex-1 h-1 bg-line rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent transition-all duration-200"
+                style={{ width: `${Math.max(progress.pct, 4)}%` }}
+              />
+            </div>
+            <span className="text-[10px] text-ink-2 tnum whitespace-nowrap">
+              {progress.pct}% — {progress.stage}
+            </span>
           </div>
         )}
         {activeTab === "canvas2d" && (
@@ -190,7 +277,10 @@ export const App: React.FC = () => {
           <McdaSuitabilityPanel
             result={pipelineResult}
             onUpdateSuitability={(newCells) =>
-              setPipelineResult((prev) => (prev ? { ...prev, suitability: newCells } : prev))
+              doc.push(
+                pipelineResult ? { ...pipelineResult, suitability: newCells } : pipelineResult,
+                "Recompute suitability (MCDA)"
+              )
             }
           />
         )}
@@ -199,7 +289,10 @@ export const App: React.FC = () => {
           <EnergyPlanningPanel
             result={pipelineResult}
             onUpdateClusters={(newClusters) =>
-              setPipelineResult((prev) => (prev ? { ...prev, energyClusters: newClusters } : prev))
+              doc.push(
+                pipelineResult ? { ...pipelineResult, energyClusters: newClusters } : pipelineResult,
+                "Re-plan electrification"
+              )
             }
           />
         )}
@@ -211,7 +304,7 @@ export const App: React.FC = () => {
             selectedPointIds={selectedPointIds}
             onSelectPoints={setSelectedPointIds}
             onUploadCustomSurvey={handleUploadCustomSurvey}
-            onUpdatePoints={(pts) => executePipeline(selectedScenario, pts)}
+            onUpdatePoints={(pts) => executePipeline(selectedScenario, pts, "push", "Edit survey points")}
           />
         )}
       </main>

@@ -98,7 +98,7 @@ The gaps, in order of severity:
 4. **Editing depth.** Selection exists; true vertex editing, snapping, undo/redo,
    and feature creation do not.
 
-### Phase A — Front-end GIS hardening (next 2–4 weeks)
+### Phase A — Front-end GIS hardening (next 2–4 weeks) — ✅ DELIVERED
 
 *Goal: unshakeable at field-data scale.*
 
@@ -115,6 +115,24 @@ The gaps, in order of severity:
   (pipeline < 2s, pan/zoom < 16ms/frame) enforced in CI.
 - **turf.js adoption** for buffer/dissolve/boolean-op correctness instead of the
   ad-hoc offset engine (keeps Bowditch/TIN bespoke code).
+
+#### Phase A delivery notes (this branch)
+
+| Commitment | Status | Implementation |
+|---|---|---|
+| Spatial indexing | ✅ | `src/core/spatial-index.ts` — uniform grid (points/triangles) + exact best-first `SegmentIndex` (cell-MBR A* search, bit-identical to brute force). Wired into MCDA distance fields, triangle-slope lookup, electrification clustering, and grid-line distance. Brute-force parity enforced by `tests/spatial-index.test.ts`. |
+| Web Workers | ✅ | `src/workers/pipeline.worker.ts` + `pipelineService` promise client with per-stage progress protocol (9 stages) and transparent main-thread fallback. App renders a live stage/percent readout during runs. |
+| Renderer v2 | ✅ | Static-scene cache (basemap→energy layers) keyed by view/basemap/layers/document signature, blitted under a dynamic pass (points, labels, furniture). Viewport culling on cells/TIN/contours/vectors/points; LOD dot-mode decimation beyond 2k visible features with label suppression; contour stride simplification; `ResizeObserver`-driven re-render. |
+| Undo/redo | ✅ | `CommandHistory` (bounded 50, labeled commands) + `useHistoryState` binding; Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y; Header buttons with next-action tooltips. Scenario loads and imports open new documents; edits, reprojects, MCDA/Energy re-evals and re-runs are undoable commands. |
+| Shapefile ingest | ✅ | Dependency-free `.shp` (types 1/3/5/8 + Z/M variants) and dBASE III `.dbf` reader with C/N/F/D/L field typing; GeoJSON reader; attribute-driven category/code inference. Multi-file Import in the toolbar. GeoPackage deferred to Phase B (WASM size vs. current need). |
+| Benchmark harness | ✅ | `npm run bench` — deterministic 10k/50k generators, hard budgets, CI-exitable. Measured at 50k: pipeline 1.30 s (was 101.7 s — 78×), MCDA warm re-eval 203 ms, hazard 106 ms, energy 6 ms, query p99 0.12 ms. All budgets green. |
+| Delaunay rebuild | ➕ (found by the harness) | The ad-hoc Bowyer-Watson was O(n²) and 99% of pipeline time. Replaced with `delaunator` sweep-hull (O(n)); bespoke face metrics/volumes kept. Contour stitching rewritten from O(S²) rescan to endpoint-hash chaining, plus elevation-band bucketing. |
+| turf.js | ⏭ deferred | Statutory corridor buffers need golden-file parity proof before an engine swap; the bench harness now provides the timing baseline to do it safely in Phase B. |
+
+**Verification:** 6/6 test suites pass (4 legacy + spatial-index parity + ingest
+roundtrip), `tsc` clean, production build green, manual QA: worker-mode pipeline,
+undo/redo round-trip, real Shapefile pair import (4 beacons + road polyline),
+6k-point CSV ingest with LOD rendering.
 
 ### Phase B — Connected when available, offline-first always (weeks 4–8)
 

@@ -1,6 +1,10 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { PipelineResult, McdaWeights } from "../types/spatial";
-import { DEFAULT_MCDA_WEIGHTS, evaluateSuitabilityGrid } from "../core/mcda-suitability";
+import {
+  DEFAULT_MCDA_WEIGHTS,
+  evaluateSuitabilityGrid,
+  buildSuitabilityIndexContext,
+} from "../core/mcda-suitability";
 
 interface McdaSuitabilityPanelProps {
   result: PipelineResult;
@@ -41,10 +45,17 @@ export const McdaSuitabilityPanel: React.FC<McdaSuitabilityPanelProps> = ({
 }) => {
   const [weights, setWeights] = useState<McdaWeights>(DEFAULT_MCDA_WEIGHTS);
 
+  // Indexes amortized per terrain/feature snapshot — weight-slider drags only
+  // re-evaluate cells, never rebuild spatial indexes.
+  const suitabilityContext = useMemo(
+    () => buildSuitabilityIndexContext(result.tin, result.vectors),
+    [result.tin, result.vectors]
+  );
+
   const handleWeightChange = (key: keyof McdaWeights, val: number) => {
     const updated = { ...weights, [key]: val };
     setWeights(updated);
-    const newCells = evaluateSuitabilityGrid(result.tin, result.vectors, updated, 20);
+    const newCells = evaluateSuitabilityGrid(result.tin, result.vectors, updated, 20, suitabilityContext);
     onUpdateSuitability(newCells);
   };
 

@@ -12,6 +12,9 @@ import {
   FileText,
   Map,
   Table2,
+  Undo2,
+  Redo2,
+  Import,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
 import { listSupportedEPSG, crsEpsgFromMetadata } from "../core/crs";
@@ -38,6 +41,13 @@ interface HeaderProps {
   onCrsChange?: (epsg: number) => void;
   onSaveProject?: () => void;
   onOpenProjectFile?: (content: string) => void;
+  onImportFiles?: (files: File[]) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  undoLabel?: string | null;
+  redoLabel?: string | null;
 }
 
 /** Navigation model — grouped by discipline, mirrors the survey workflow. */
@@ -82,6 +92,13 @@ export const Header: React.FC<HeaderProps> = ({
   onCrsChange,
   onSaveProject,
   onOpenProjectFile,
+  onImportFiles,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
+  undoLabel,
+  redoLabel,
 }) => {
   const supportedCrs = listSupportedEPSG();
   const activeEpsg = crsEpsgFromMetadata(currentCrs || selectedScenario.metadata.crs);
@@ -135,6 +152,45 @@ export const Header: React.FC<HeaderProps> = ({
             className="hidden"
           />
         </label>
+        <label
+          className="ui-btn"
+          title="Import Shapefile (.shp + .dbf) or GeoJSON"
+          style={{ cursor: "pointer" }}
+        >
+          <Import className="w-3.5 h-3.5" />
+          <span>Import</span>
+          <input
+            type="file"
+            multiple
+            accept=".shp,.dbf,.shx,.prj,.geojson,.json"
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = ""; // allow re-selecting the same file set
+              if (files.length > 0) onImportFiles?.(files);
+            }}
+            className="hidden"
+          />
+        </label>
+
+        <div className="ui-vsep" />
+
+        {/* Edit history */}
+        <button
+          onClick={onUndo}
+          disabled={!canUndo}
+          className="ui-btn-icon"
+          title={canUndo ? `Undo: ${undoLabel ?? ""} (Ctrl+Z)` : "Nothing to undo"}
+        >
+          <Undo2 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={onRedo}
+          disabled={!canRedo}
+          className="ui-btn-icon"
+          title={canRedo ? `Redo: ${redoLabel ?? ""} (Ctrl+Shift+Z)` : "Nothing to redo"}
+        >
+          <Redo2 className="w-3.5 h-3.5" />
+        </button>
 
         <div className="ui-vsep" />
 

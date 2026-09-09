@@ -6,6 +6,7 @@
 
 import { TinMesh, SurveyVector, SuitabilityCell, McdaWeights } from "../types/spatial";
 import { pointToSegmentDistance } from "./buffer-engine";
+import { UniformGridIndex, SegmentIndex, XY } from "./spatial-index";
 
 export const DEFAULT_MCDA_WEIGHTS: McdaWeights = {
   slopeWeight: 35,
@@ -16,11 +17,43 @@ export const DEFAULT_MCDA_WEIGHTS: McdaWeights = {
   riparianBufferM: 30, // meters
 };
 
+/**
+ * Prebuilt spatial context — amortizes index construction across repeated
+ * evaluations (interactive weight sliders rebuild the grid many times on the
+ * same terrain/features).
+ */
+export interface SuitabilityIndexContext {
+  triangleIndex: UniformGridIndex<TinMesh["triangles"][number]>;
+  roadIndex: SegmentIndex;
+  riverIndex: SegmentIndex;
+  infraIndex: SegmentIndex;
+}
+
+export function buildSuitabilityIndexContext(
+  tin: TinMesh | null,
+  vectors: SurveyVector[]
+): SuitabilityIndexContext {
+  const triangleIndex = new UniformGridIndex(tin?.triangles ?? [], (t) => ({
+    x: (t.p1.easting + t.p2.easting + t.p3.easting) / 3,
+    y: (t.p1.northing + t.p2.northing + t.p3.northing) / 3,
+  }));
+  const roadVectors = vectors.filter((v) => v.category === "road" || v.code === "RD-CL");
+  const riverVectors = vectors.filter((v) => v.category === "water" || v.code === "RIV");
+  const infraVectors = vectors.filter((v) => v.category === "settlement" || v.category === "utility");
+  return {
+    triangleIndex,
+    roadIndex: buildSegmentIndex(roadVectors),
+    riverIndex: buildSegmentIndex(riverVectors),
+    infraIndex: buildSegmentIndex(infraVectors),
+  };
+}
+
 export function evaluateSuitabilityGrid(
   tin: TinMesh | null,
   vectors: SurveyVector[],
   weights: McdaWeights = DEFAULT_MCDA_WEIGHTS,
-  gridResolution = 20
+  gridResolution = 20,
+  context?: SuitabilityIndexContext
 ): SuitabilityCell[] {
   if (!tin || tin.vertices.length < 3) return [];
 
@@ -46,6 +79,17 @@ export function evaluateSuitabilityGrid(
   const riverVectors = vectors.filter((v) => v.category === "water" || v.code === "RIV");
   const infraVectors = vectors.filter((v) => v.category === "settlement" || v.category === "utility");
 
+  // Spatial indexes: built once per evaluation (or supplied via context) so
+  // per-cell queries touch a local neighbourhood instead of scanning every
+  // triangle/segment (the previous O(cells × triangles + cells × segments)).
+  const triangleIndex = context?.triangleIndex ?? new UniformGridIndex(tin.triangles, (t) => ({
+    x: (t.p1.easting + t.p2.easting + t.p3.easting) / 3,
+    y: (t.p1.northing + t.p2.northing + t.p3.northing) / 3,
+  }));
+  const roadIndex = context?.roadIndex ?? buildSegmentIndex(roadVectors);
+  const riverIndex = context?.riverIndex ?? buildSegmentIndex(riverVectors);
+  const infraIndex = context?.infraIndex ?? buildSegmentIndex(infraVectors);
+
   const cells: SuitabilityCell[] = [];
 
   for (let ix = 0; ix <= gridResolution; ix++) {
@@ -54,10 +98,10 @@ export function evaluateSuitabilityGrid(
       const y = minY + iy * stepY;
 
       // Find elevation & slope from nearest triangle
-      const slope = estimateSlopeAtPoint(x, y, tin);
-      const distToRoad = minDistanceToVectors(x, y, roadVectors);
-      const distToRiver = minDistanceToVectors(x, y, riverVectors);
-      const distToInfra = minDistanceToVectors(x, y, infraVectors);
+      const slope = estimateSlopeAtPoint(x, y, tin, triangleIndex);
+      const distToRoad = minDistanceToVectors(x, y, roadVectors, roadIndex);
+      const distToRiver = minDistanceToVectors(x, y, riverVectors, riverIndex);
+      const distToInfra = minDistanceToVectors(x, y, infraVectors, infraIndex);
 
       // Hard environmental restriction: inside riparian setback
       if (distToRiver < weights.riparianBufferM) {
@@ -136,34 +180,29 @@ export function evaluateSuitabilityGrid(
   return cells;
 }
 
-function estimateSlopeAtPoint(x: number, y: number, tin: TinMesh): number {
-  let nearestTri = tin.triangles[0];
-  let minD = Infinity;
-
-  for (const tri of tin.triangles) {
-    const cx = (tri.p1.easting + tri.p2.easting + tri.p3.easting) / 3;
-    const cy = (tri.p1.northing + tri.p2.northing + tri.p3.northing) / 3;
-    const d = Math.hypot(x - cx, y - cy);
-    if (d < minD) {
-      minD = d;
-      nearestTri = tri;
-    }
-  }
-
-  return nearestTri ? nearestTri.slopePercent : 5.0;
+function estimateSlopeAtPoint(
+  x: number,
+  y: number,
+  tin: TinMesh,
+  triangleIndex: UniformGridIndex<TinMesh["triangles"][number]>
+): number {
+  const hit = triangleIndex.nearest(x, y);
+  return hit ? hit.item.slopePercent : 5.0;
 }
 
-function minDistanceToVectors(x: number, y: number, vectors: SurveyVector[]): number {
+function minDistanceToVectors(
+  x: number,
+  y: number,
+  vectors: SurveyVector[],
+  index: SegmentIndex
+): number {
   if (vectors.length === 0) return 200; // default moderate distance
-  let minDist = Infinity;
+  return index.nearestDistance(x, y, pointToSegmentDistance);
+}
 
-  for (const vec of vectors) {
-    const pts = vec.points;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const d = pointToSegmentDistance(x, y, pts[i].easting, pts[i].northing, pts[i + 1].easting, pts[i + 1].northing);
-      if (d < minDist) minDist = d;
-    }
-  }
-
-  return minDist;
+function buildSegmentIndex(vectors: SurveyVector[]): SegmentIndex {
+  const polylines: XY[][] = vectors.map((v) =>
+    v.points.map((p) => ({ x: p.easting, y: p.northing }))
+  );
+  return new SegmentIndex(polylines);
 }

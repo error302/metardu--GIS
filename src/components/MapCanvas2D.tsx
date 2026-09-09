@@ -66,6 +66,22 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   onScaleChange,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Renderer v2: static-scene cache (basemap..energy layers) blitted under the
+  // dynamic pass (points, labels, furniture) so selection/hover redraws never
+  // re-stroke the heavy layers, and pan/zoom only re-renders them once.
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const staticSigRef = useRef("");
+  const staticResultRef = useRef<PipelineResult | null>(null);
+  const [resizeTick, setResizeTick] = useState(0);
+
+  // Re-render on element resize (canvas backing store is sized in the loop)
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setResizeTick((t) => t + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Viewport transformation
   const [zoom, setZoom] = useState(1.0);
@@ -105,6 +121,9 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   );
 
   const isCad = basemap === "cad";
+
+  // Stable signature of layer visibility for the static-cache key
+  const layersSig = useMemo(() => JSON.stringify(layers), [layers]);
 
   const [showLayerPanel, setShowLayerPanel] = useState(false);
   const [showToolbox, setShowToolbox] = useState(false);
@@ -159,7 +178,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   const toWorldE = (sx: number) => (sx - pan.x) / zoom;
   const toWorldN = (sy: number) => -(sy - pan.y) / zoom;
 
-  /* ---------------- Render loop ---------------- */
+  /* ---------------- Render loop (v2: static cache + viewport culling + LOD) ---------------- */
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -168,32 +187,48 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
 
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
+    const targetW = Math.max(1, Math.round(rect.width * dpr));
+    const targetH = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const w = rect.width;
     const h = rect.height;
 
-    /* 1. Basemap */
-    ctx.fillStyle = BASEMAP_BG[basemap];
-    ctx.fillRect(0, 0, w, h);
-    if (basemap === "satellite") {
-      ctx.fillStyle = "rgba(38, 66, 48, 0.16)";
-      ctx.fillRect(0, 0, w, h);
-    } else if (basemap === "viirs") {
-      const grad = ctx.createRadialGradient(w / 2, h / 2, 20, w / 2, h / 2, w / 1.4);
-      grad.addColorStop(0, "rgba(217, 164, 65, 0.07)");
-      grad.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, w, h);
-    }
-
-    /* 2. Graticule — powers-of-ten grid, mono labels with collision spacing */
-    const graticuleStep = Math.max(10, Math.pow(10, Math.floor(Math.log10(160 / zoom))));
+    // Visible world window — shared by the static and dynamic passes.
     const minVisE = toWorldE(0);
     const maxVisE = toWorldE(w);
     const minVisN = toWorldN(h);
     const maxVisN = toWorldN(0);
+    const viewPadWorld = 80 / Math.max(zoom, 1e-6); // slack for edge-straddling strokes
+    const inView = (e: number, n: number) =>
+      e >= minVisE - viewPadWorld &&
+      e <= maxVisE + viewPadWorld &&
+      n >= minVisN - viewPadWorld &&
+      n <= maxVisN + viewPadWorld;
+
+    /* ---- Static scene: sections 1–10 depend only on view/basemap/layers/result ---- */
+    function renderStatic(sctx: CanvasRenderingContext2D, sw: number, sh: number) {
+      const ctx = sctx;
+
+      /* 1. Basemap */
+      ctx.fillStyle = BASEMAP_BG[basemap];
+      ctx.fillRect(0, 0, sw, sh);
+      if (basemap === "satellite") {
+        ctx.fillStyle = "rgba(38, 66, 48, 0.16)";
+        ctx.fillRect(0, 0, sw, sh);
+      } else if (basemap === "viirs") {
+        const grad = ctx.createRadialGradient(sw / 2, sh / 2, 20, sw / 2, sh / 2, sw / 1.4);
+        grad.addColorStop(0, "rgba(217, 164, 65, 0.07)");
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, sw, sh);
+      }
+
+      /* 2. Graticule — powers-of-ten grid, mono labels with collision spacing */
+      const graticuleStep = Math.max(10, Math.pow(10, Math.floor(Math.log10(160 / zoom))));
 
     ctx.lineWidth = 0.5;
     ctx.strokeStyle = isCad ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.045)";
@@ -230,10 +265,11 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     }
     ctx.textAlign = "center";
 
-    /* 3. MCDA suitability cells */
+    /* 3. MCDA suitability cells (viewport-culled) */
     if (layers.suitability && result.suitability.length > 0) {
       const cellPx = Math.max(8, 25 * zoom);
       for (const cell of result.suitability) {
+        if (!inView(cell.x, cell.y)) continue;
         const sx = toScreenX(cell.x);
         const sy = toScreenY(cell.y);
         let color: string;
@@ -276,11 +312,17 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    /* 5. TIN wireframe */
+    /* 5. TIN wireframe (cull triangles wholly outside the view) */
     if (layers.tin && result.tin) {
       ctx.strokeStyle = isCad ? "rgba(0,0,0,0.18)" : "rgba(255,255,255,0.07)";
       ctx.lineWidth = 0.6;
       for (const tri of result.tin.triangles) {
+        if (
+          !inView(tri.p1.easting, tri.p1.northing) &&
+          !inView(tri.p2.easting, tri.p2.northing) &&
+          !inView(tri.p3.easting, tri.p3.northing)
+        )
+          continue;
         ctx.beginPath();
         ctx.moveTo(toScreenX(tri.p1.easting), toScreenY(tri.p1.northing));
         ctx.lineTo(toScreenX(tri.p2.easting), toScreenY(tri.p2.northing));
@@ -290,29 +332,57 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    /* 6. Contours — minor/major hierarchy */
-    if (layers.contours) {
+    /* 6. Contours — minor/major hierarchy, viewport-culled with LOD stride */
+    if (layers.contours && result.contours.length > 0) {
+      let totalContourPts = 0;
+      for (const c of result.contours) totalContourPts += c.points.length;
+      const stride = totalContourPts > 12000 ? Math.ceil(totalContourPts / 12000) : 1;
       for (const c of result.contours) {
+        // Line-level cull: skip stroking when no vertex lands near the view
+        let visible = false;
+        for (const pt of c.points) {
+          if (inView(pt[0], pt[1])) {
+            visible = true;
+            break;
+          }
+        }
+        if (!visible) continue;
+
         ctx.strokeStyle = c.isMajor ? C.contourMajor : C.contourMinor;
         ctx.globalAlpha = c.isMajor ? 0.9 : 0.55;
         ctx.lineWidth = c.isMajor ? 1.3 : 0.7;
         ctx.beginPath();
-        c.points.forEach((pt, idx) => {
+        let first = true;
+        for (let i = 0; i < c.points.length; i += stride) {
+          const pt = c.points[i];
           const sx = toScreenX(pt[0]);
           const sy = toScreenY(pt[1]);
-          if (idx === 0) ctx.moveTo(sx, sy);
-          else ctx.lineTo(sx, sy);
-        });
+          if (first) {
+            ctx.moveTo(sx, sy);
+            first = false;
+          } else {
+            ctx.lineTo(sx, sy);
+          }
+        }
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
     }
 
-    /* 7. Feature vectors */
+    /* 7. Feature vectors (viewport-culled) */
     for (const vec of result.vectors) {
       if (vec.category === "boundary") continue;
       if (vec.category === "road" && !layers.roads) continue;
       if (vec.category === "water" && !layers.rivers) continue;
+
+      let visible = false;
+      for (const pt of vec.points) {
+        if (inView(pt.easting, pt.northing)) {
+          visible = true;
+          break;
+        }
+      }
+      if (!visible) continue;
 
       ctx.strokeStyle = vec.color;
       ctx.globalAlpha = isCad ? 0.9 : 0.85;
@@ -419,12 +489,62 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    /* 11. Survey points / beacons (geometry only — labels in pass below) */
+    } // end renderStatic
+
+    /* ---- Static cache orchestration ----
+       Heavy layers re-stroke only when the view, basemap, layer set, or
+       document changes; every other redraw (selection, hover, label state)
+       blits the cached scene and repaints the cheap dynamic pass. */
+    const sig = `${zoom.toFixed(4)}|${pan.x.toFixed(2)}|${pan.y.toFixed(2)}|${basemap}|${layersSig}`;
+    let sc = staticCanvasRef.current;
+    if (!sc) {
+      sc = document.createElement("canvas");
+      staticCanvasRef.current = sc;
+    }
+    if (sc.width !== targetW || sc.height !== targetH) {
+      sc.width = targetW;
+      sc.height = targetH;
+    }
+    const needStatic = sig !== staticSigRef.current || staticResultRef.current !== result;
+    if (needStatic) {
+      const sctx = sc.getContext("2d");
+      if (sctx) {
+        sctx.setTransform(1, 0, 0, 1, 0, 0);
+        sctx.clearRect(0, 0, sc.width, sc.height);
+        sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        renderStatic(sctx, w, h);
+      }
+      staticSigRef.current = sig;
+      staticResultRef.current = result;
+    }
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(sc, 0, 0, w, h);
+
+    /* 11. Survey points / beacons — LOD: decimate beyond ~2k visible features */
+    const selSet = new Set(selectedPointIds);
+    let dotMode = false;
+    let pointStride = 1;
     if (layers.beacons) {
+      let visibleCount = 0;
       for (const pt of result.points) {
+        if (inView(pt.easting, pt.northing)) visibleCount++;
+      }
+      if (visibleCount > 2000) {
+        dotMode = true;
+        pointStride = Math.ceil(visibleCount / 2000);
+      }
+
+      let visibleSeq = 0;
+      for (const pt of result.points) {
+        const isSelected = selSet.has(pt.id);
+        if (!inView(pt.easting, pt.northing) && !isSelected) continue;
+        if (dotMode && !isSelected) {
+          visibleSeq++;
+          if (visibleSeq % pointStride !== 0) continue;
+        }
         const sx = toScreenX(pt.easting);
         const sy = toScreenY(pt.northing);
-        const isSelected = selectedPointIds.includes(pt.id);
         const isBnd = pt.category === "boundary";
 
         if (isSelected) {
@@ -437,13 +557,20 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
           ctx.stroke();
         }
 
-        ctx.fillStyle = isSelected ? C.selected : isBnd ? C.beaconBoundary : C.beaconOther;
-        ctx.beginPath();
-        ctx.arc(sx, sy, isBnd ? 4 : 2.8, 0, 2 * Math.PI);
-        ctx.fill();
-        ctx.strokeStyle = isCad ? "#ffffff" : "#161619";
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        if (dotMode && !isSelected) {
+          ctx.fillStyle = isBnd ? C.beaconBoundary : C.beaconOther;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 1.6, 0, 2 * Math.PI);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = isSelected ? C.selected : isBnd ? C.beaconBoundary : C.beaconOther;
+          ctx.beginPath();
+          ctx.arc(sx, sy, isBnd ? 4 : 2.8, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.strokeStyle = isCad ? "#ffffff" : "#161619";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
       }
     }
 
@@ -499,23 +626,29 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    /* P2/P3/P4 — beacon labels */
+    /* P2/P3/P4 — beacon labels (suppressed in dot mode except selection + boundary) */
     if (layers.beacons) {
-      const ordered: SurveyPoint[] = [
-        ...result.points.filter((p) => selectedPointIds.includes(p.id)),
-        ...result.points.filter((p) => !selectedPointIds.includes(p.id) && p.category === "boundary"),
-        ...result.points.filter((p) => !selectedPointIds.includes(p.id) && p.category !== "boundary"),
-      ];
+      const ordered: SurveyPoint[] = dotMode
+        ? [
+            ...result.points.filter((p) => selSet.has(p.id)),
+            ...result.points.filter((p) => !selSet.has(p.id) && p.category === "boundary"),
+          ]
+        : [
+            ...result.points.filter((p) => selSet.has(p.id)),
+            ...result.points.filter((p) => !selSet.has(p.id) && p.category === "boundary"),
+            ...result.points.filter((p) => !selSet.has(p.id) && p.category !== "boundary"),
+          ];
       for (const pt of ordered) {
+        const isSelected = selSet.has(pt.id);
+        if (!inView(pt.easting, pt.northing) && !isSelected) continue;
         const sx = toScreenX(pt.easting);
         const sy = toScreenY(pt.northing);
-        const isSelected = selectedPointIds.includes(pt.id);
-        const lw = ctx.measureText(pt.id).width;
-        if (!tryPlace(sx + 6 + lw / 2, sy - 7, lw + 10, 12)) continue;
-
         ctx.font = isSelected
           ? "600 9px 'IBM Plex Mono', monospace"
           : "8.5px 'IBM Plex Mono', monospace";
+        const lw = ctx.measureText(pt.id).width;
+        if (!tryPlace(sx + 6 + lw / 2, sy - 7, lw + 10, 12)) continue;
+
         ctx.textAlign = "left";
         ctx.fillStyle = isSelected ? C.selected : isCad ? "#3a3a40" : C.ink2;
         ctx.fillText(pt.id, sx + 6, sy - 4);
@@ -538,10 +671,16 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    /* P6 — hazard tags */
+    /* P6 — hazard tags (geometry mirrored from the static pass) */
     if (layers.hazards) {
       ctx.font = "8.5px 'IBM Plex Mono', monospace";
-      for (const hz of hazardGeoms) {
+      for (const sink of result.hazardSinks) {
+        const hz = {
+          x: toScreenX(sink.center[0]),
+          y: toScreenY(sink.center[1]),
+          r: Math.min(34, Math.max(10, sink.depthM * 10 * zoom)),
+          depth: sink.depthM,
+        };
         const tx = hz.x + hz.r + 8;
         const text = `sink −${hz.depth} m`;
         const tw = ctx.measureText(text).width;
@@ -627,7 +766,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       ctx.fillText(`${barM} m`, bx + barPx + 2, by - 5);
       ctx.restore();
     }
-  }, [zoom, pan, basemap, layers, result, selectedPointIds, isCad]);
+  }, [zoom, pan, basemap, layers, layersSig, result, selectedPointIds, isCad, resizeTick]);
 
   /* ---------------- Interactions ---------------- */
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
