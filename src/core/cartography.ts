@@ -160,8 +160,10 @@ export function contourLabelText(elevation: number): string {
 
 /**
  * Greedy along-line placement for index contours: walk the polyline in
- * screen space and drop a halo label every `spacingPx`, oriented along the
- * local segment and flipped upright. Minor contours are never labelled.
+ * screen space by arc length and drop a halo label every `spacingPx`,
+ * oriented along the local segment and flipped upright. Positions outside
+ * the frame (per the caller's visibility test) are skipped without
+ * consuming the budget. Minor contours are never labelled.
  */
 export function placeContourLabels(
   contours: ContourLine[],
@@ -179,52 +181,32 @@ export function placeContourLabels(
     if (!c.isMajor || c.points.length < 2) continue;
 
     const scr = c.points.map(([e, n]) => toScreen(e, n));
-
-    // Split into runs at frame jumps so labels never straddle a data void.
-    const runs: [number, number][][] = [];
-    let cur: [number, number][] = [scr[0]];
-    for (let i = 1; i < scr.length; i++) {
-      const gap = Math.hypot(scr[i][0] - scr[i - 1][0], scr[i][1] - scr[i - 1][1]);
-      if (gap > spacing * 2) {
-        runs.push(cur);
-        cur = [scr[i]];
-      } else {
-        cur.push(scr[i]);
-      }
-    }
-    runs.push(cur);
-
     let total = 0;
-    for (const run of runs) {
-      for (let i = 1; i < run.length; i++) {
-        total += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
-      }
+    for (let i = 1; i < scr.length; i++) {
+      total += Math.hypot(scr[i][0] - scr[i - 1][0], scr[i][1] - scr[i - 1][1]);
     }
     if (total < minLine) continue;
 
-    for (const run of runs) {
-      let nextAt = spacing; // distance position of the next label
-      let acc = 0; // distance walked so far in this run
-      for (let i = 1; i < run.length && out.length < budget; i++) {
-        const [x0, y0] = run[i - 1];
-        const [x1, y1] = run[i];
-        const seg = Math.hypot(x1 - x0, y1 - y0);
-        if (seg < 1e-6) continue;
-        while (nextAt <= acc + seg && out.length < budget) {
-          const t = (nextAt - acc) / seg;
-          const lx = x0 + (x1 - x0) * t;
-          const ly = y0 + (y1 - y0) * t;
-          if (visible(lx, ly)) {
-            let ang = (Math.atan2(y1 - y0, x1 - x0) * 180) / Math.PI;
-            if (ang > 90) ang -= 180;
-            if (ang < -90) ang += 180;
-            out.push({ x: lx, y: ly, angleDeg: ang, text: contourLabelText(c.elevation) });
-          }
-          nextAt += spacing; // advance regardless; keep scanning the line
+    let nextAt = spacing; // arc-length position of the next label
+    let acc = 0; // arc length walked so far
+    for (let i = 1; i < scr.length && out.length < budget; i++) {
+      const [x0, y0] = scr[i - 1];
+      const [x1, y1] = scr[i];
+      const seg = Math.hypot(x1 - x0, y1 - y0);
+      if (seg < 1e-6) continue;
+      while (nextAt <= acc + seg && out.length < budget) {
+        const t = (nextAt - acc) / seg;
+        const lx = x0 + (x1 - x0) * t;
+        const ly = y0 + (y1 - y0) * t;
+        if (visible(lx, ly)) {
+          let ang = (Math.atan2(y1 - y0, x1 - x0) * 180) / Math.PI;
+          if (ang > 90) ang -= 180;
+          if (ang < -90) ang += 180;
+          out.push({ x: lx, y: ly, angleDeg: ang, text: contourLabelText(c.elevation) });
         }
-        acc += seg;
+        nextAt += spacing; // advance regardless; keep scanning the line
       }
-      if (out.length >= budget) break;
+      acc += seg;
     }
   }
   return out;

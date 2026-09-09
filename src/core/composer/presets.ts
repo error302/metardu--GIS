@@ -110,7 +110,7 @@ export function atlasPreset(): ComposerTemplate {
         fit: "suitability",
         scaleDenominator: null,
         layers: {
-          points: false, vectors: false, boundary: true, contours: false,
+          points: false, vectors: false, boundary: true, contours: true,
           suitability: true, hazards: true, energy: true, graticule: false,
         },
       },
