@@ -15,6 +15,8 @@ import {
   Undo2,
   Redo2,
   Import,
+  Printer,
+  Database,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
 import { CrsPicker } from "./CrsPicker";
@@ -28,7 +30,9 @@ export type ActiveTab =
   | "energy"
   | "deedplan"
   | "atlas"
-  | "datagrid";
+  | "composer"
+  | "datagrid"
+  | "postgis";
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -73,11 +77,15 @@ const NAV_GROUPS: { label: string; items: { id: ActiveTab; label: string; icon: 
     items: [
       { id: "deedplan", label: "Deed Plan (Form 4)", icon: FileText },
       { id: "atlas", label: "Planning Atlas", icon: Map },
+      { id: "composer", label: "Print Composer", icon: Printer },
     ],
   },
   {
     label: "Data",
-    items: [{ id: "datagrid", label: "Attribute Table", icon: Table2 }],
+    items: [
+      { id: "datagrid", label: "Attribute Table", icon: Table2 },
+      { id: "postgis", label: "PostGIS Link", icon: Database },
+    ],
   },
 ];
 

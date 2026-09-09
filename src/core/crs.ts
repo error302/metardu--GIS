@@ -244,6 +244,19 @@ export function transform(fromEpsg: number, toEpsg: number, x: number, y: number
   return proj4(`EPSG:${fromEpsg}`, `EPSG:${toEpsg}`, [x, y]);
 }
 
+/**
+ * Transform from a raw proj4 definition (e.g. derived from a .prj WKT that
+ * matched no registry code) into a registered target CRS.
+ */
+export function transformFromDef(
+  fromDef: string,
+  toEpsg: number,
+  x: number,
+  y: number,
+): [number, number] {
+  return proj4(fromDef, `EPSG:${toEpsg}`, [x, y]);
+}
+
 export function toWGS84(epsg: number, x: number, y: number): [number, number] {
   return transform(epsg, 4326, x, y);
 }

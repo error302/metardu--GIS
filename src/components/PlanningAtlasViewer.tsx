@@ -1,14 +1,15 @@
 import React, { useMemo } from "react";
 import { Download, Printer } from "lucide-react";
 import { PipelineResult } from "../types/spatial";
-import { generatePlanningAtlasSvg } from "../exporters/planning-atlas-svg";
+import { renderTemplate } from "../core/composer/render";
+import { atlasPreset } from "../core/composer/presets";
 
 interface PlanningAtlasViewerProps {
   result: PipelineResult;
 }
 
 export const PlanningAtlasViewer: React.FC<PlanningAtlasViewerProps> = ({ result }) => {
-  const svgXml = useMemo(() => generatePlanningAtlasSvg(result), [result]);
+  const svgXml = useMemo(() => renderTemplate(atlasPreset(), result).svg, [result]);
 
   const handleDownloadSvg = () => {
     const blob = new Blob([svgXml], { type: "image/svg+xml" });

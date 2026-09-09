@@ -4,8 +4,10 @@ import { PipelineResult } from "../types/spatial";
 import { exportToDxf } from "../exporters/dxf-exporter";
 import { exportToGeoJson } from "../exporters/geojson-exporter";
 import { exportToLandXml } from "../exporters/landxml-exporter";
-import { generateDeedPlanSvg } from "../exporters/deed-plan-svg";
-import { generatePlanningAtlasSvg } from "../exporters/planning-atlas-svg";
+import { renderTemplate } from "../core/composer/render";
+import { form4Preset, atlasPreset } from "../core/composer/presets";
+import { exportGpkg } from "../core/export/gpkg-writer";
+import { ensureGpkgBrowserLoader } from "../core/ingest/gpkg-browser";
 
 interface ExportHubModalProps {
   result: PipelineResult;
@@ -36,8 +38,8 @@ const ExportRow: React.FC<{
 );
 
 export const ExportHubModal: React.FC<ExportHubModalProps> = ({ result, onClose }) => {
-  const downloadFile = (content: string, filename: string, mimeType: string) => {
-    const blob = new Blob([content], { type: mimeType });
+  const downloadFile = (content: string | Blob, filename: string, mimeType: string) => {
+    const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -47,6 +49,24 @@ export const ExportHubModal: React.FC<ExportHubModalProps> = ({ result, onClose 
   };
 
   const titleClean = result.metadata.title.replace(/\s+/g, "_");
+
+  const [gpkgBusy, setGpkgBusy] = React.useState(false);
+  const [gpkgError, setGpkgError] = React.useState<string | null>(null);
+
+  const downloadGpkg = async () => {
+    setGpkgBusy(true);
+    setGpkgError(null);
+    try {
+      await ensureGpkgBrowserLoader();
+      const bytes = await exportGpkg(result);
+      const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      downloadFile(new Blob([ab]), `Survey_${titleClean}.gpkg`, "application/geopackage+sqlite3");
+    } catch (err) {
+      setGpkgError((err as Error).message);
+    } finally {
+      setGpkgBusy(false);
+    }
+  };
 
   return (
     <div
@@ -73,10 +93,16 @@ export const ExportHubModal: React.FC<ExportHubModalProps> = ({ result, onClose 
           <ExportRow
             icon={FileSpreadsheet}
             format="Form 4 Deed Plan (SVG)"
-            description="Statutory mutation sheet with graticule and beacon schedule."
+            description="Statutory mutation sheet from the print-composer template."
             onDownload={() =>
-              downloadFile(generateDeedPlanSvg(result), `Form4_${titleClean}.svg`, "image/svg+xml")
+              downloadFile(renderTemplate(form4Preset(), result).svg, `Form4_${titleClean}.svg`, "image/svg+xml")
             }
+          />
+          <ExportRow
+            icon={FileSpreadsheet}
+            format="GeoPackage (.gpkg)"
+            description={gpkgError ? `Export failed: ${gpkgError}` : "OGC SQLite container — beacons, vectors, boundary with attributes."}
+            onDownload={downloadGpkg}
           />
           <ExportRow
             icon={FileCode}
@@ -103,12 +129,12 @@ export const ExportHubModal: React.FC<ExportHubModalProps> = ({ result, onClose 
             }
           />
           <ExportRow
-            icon={Globe}
+            icon={Map}
             format="Regional Planning Atlas (SVG)"
             description="A3 decision dossier — suitability, hazards, approval blocks."
             onDownload={() =>
               downloadFile(
-                generatePlanningAtlasSvg(result),
+                renderTemplate(atlasPreset(), result).svg,
                 `Regional_Planning_Atlas_${titleClean}.svg`,
                 "image/svg+xml"
               )

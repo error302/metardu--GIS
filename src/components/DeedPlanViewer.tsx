@@ -1,14 +1,15 @@
 import React, { useMemo, useState } from "react";
 import { Download, Printer, FileText, ZoomIn, ZoomOut } from "lucide-react";
 import { PipelineResult } from "../types/spatial";
-import { generateDeedPlanSvg } from "../exporters/deed-plan-svg";
+import { renderTemplate } from "../core/composer/render";
+import { form4Preset } from "../core/composer/presets";
 
 interface DeedPlanViewerProps {
   result: PipelineResult;
 }
 
 export const DeedPlanViewer: React.FC<DeedPlanViewerProps> = ({ result }) => {
-  const svgXml = useMemo(() => generateDeedPlanSvg(result), [result]);
+  const svgXml = useMemo(() => renderTemplate(form4Preset(), result).svg, [result]);
   const [zoomPct, setZoomPct] = useState(100);
 
   const handleDownloadSvg = () => {

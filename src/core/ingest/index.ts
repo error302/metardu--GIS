@@ -17,6 +17,7 @@ import {
 } from "./shapefile";
 import { parseGeoJson, geometryToParts, GeoJsonFeature } from "./geojson";
 import { parseGpkg, configureSqlLoader, geomToFeatureKind, GpkgFeature } from "./gpkg";
+import { parsePrj } from "../crs-wkt";
 
 /* sql.js WASM loading is platform-specific:
    - Browser: App calls ensureGpkgBrowserLoader() (see gpkg-browser.ts) before
@@ -31,6 +32,8 @@ async function ensureGpkgLoader(): Promise<void> {
 export interface ImportResult {
   layerName: string;
   points: SurveyPoint[];
+  /** CRS detected from a .prj sidecar (Shapefile groups) or .gpkg srs_id. */
+  sourceCrs?: { epsg: number | null; name: string; proj4: string };
   stats: {
     pointFeatures: number;
     lineFeatures: number;
@@ -194,6 +197,7 @@ export async function ingestFiles(fileList: File[]): Promise<ImportResult> {
   }
 
   const points: SurveyPoint[] = [];
+  let sourceCrs: ImportResult["sourceCrs"] = undefined;
   const stats: ImportResult["stats"] = {
     pointFeatures: 0,
     lineFeatures: 0,
@@ -226,7 +230,20 @@ export async function ingestFiles(fileList: File[]): Promise<ImportResult> {
       warnings.push(`${base}: no .dbf supplied — geometry imported without attributes`);
     }
     if (group.prj) {
-      warnings.push(`${base}: verify the CRS — .prj detected but EPSG mapping is not applied automatically`);
+      // Phase C: .prj WKT now drives CRS detection (reprojection happens in
+      // the app layer once the working CRS is known).
+      try {
+        const wktCrs = parsePrj(await group.prj.text());
+        if (!sourceCrs) sourceCrs = { epsg: wktCrs.epsg, name: wktCrs.name, proj4: wktCrs.proj4 };
+        else if (sourceCrs.proj4 !== wktCrs.proj4) {
+          warnings.push(`${base}: .prj CRS (${wktCrs.name}) differs from the first detected CRS — first wins`);
+        }
+        warnings.push(
+          `${base}: CRS from .prj — ${wktCrs.name}${wktCrs.epsg ? ` (EPSG:${wktCrs.epsg})` : " (unregistered definition)"}`,
+        );
+      } catch (err) {
+        warnings.push(`${base}: .prj unreadable (${(err as Error).message}) — verify the CRS manually`);
+      }
     }
 
     records.forEach((rec, fid) => {
@@ -364,6 +381,7 @@ export async function ingestFiles(fileList: File[]): Promise<ImportResult> {
   return {
     layerName: layerNames.length > 0 ? layerNames.join(", ") : "Imported data",
     points,
+    sourceCrs,
     stats,
     warnings,
   };

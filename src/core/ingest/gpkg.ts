@@ -17,6 +17,7 @@ export type { FeatureKind, GpkgFeature, WkbCoord, WkbGeom } from "./gpkg-types";
 
 type SqlJsDatabase = {
   exec: (sql: string, params?: unknown[]) => { columns: string[]; values: unknown[][] }[];
+  export: () => Uint8Array;
   close: () => void;
 };
 
@@ -40,6 +41,8 @@ export function configureSqlLoader(loader: (opts?: SqlInitOptions) => Promise<Sq
   enginePromise = null;
 }
 
+export type { SqlJsDatabase, SqlJsStatic };
+
 async function getEngine(opts?: SqlInitOptions): Promise<SqlJsStatic> {
   if (!enginePromise) {
     if (!initSqlJsFn) {
@@ -51,6 +54,18 @@ async function getEngine(opts?: SqlInitOptions): Promise<SqlJsStatic> {
     enginePromise = initSqlJsFn(opts);
   }
   return enginePromise;
+}
+
+/**
+ * Open a fresh (or in-memory) sql.js database through the shared lazy engine.
+ * Used by the GeoPackage writer (export path) as well as the reader.
+ */
+export async function openSqlDatabase(
+  data?: Uint8Array,
+  opts?: SqlInitOptions,
+): Promise<SqlJsDatabase> {
+  const SQL = await getEngine(opts);
+  return new SQL.Database(data);
 }
 
 /* ---------------- GP binary blob decoding ---------------- */

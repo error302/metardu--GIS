@@ -15,10 +15,12 @@ import { pipelineService, PipelineProgressEvent } from "./core/pipeline-client";
 import { ingestFiles } from "./core/ingest";
 import { ensureGpkgBrowserLoader } from "./core/ingest/gpkg-browser";
 import { PipelineResult, SurveyPoint } from "./types/spatial";
-import { transform, crsEpsgFromMetadata, getCRS } from "./core/crs";
+import { transform, transformFromDef, crsEpsgFromMetadata, getCRS, registerCrsDefinition } from "./core/crs";
 import { createProjectSnapshot, downloadProjectFile, parseProjectFile } from "./core/project";
 import { useHistoryState } from "./hooks/use-history";
 import { initGeoidModel, subscribeGeoidStatus, GeoidStatus } from "./core/geoid/grid";
+import { ComposerPanel } from "./components/ComposerPanel";
+import { PostgisPanel } from "./components/PostgisPanel";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
@@ -189,6 +191,37 @@ export const App: React.FC = () => {
         await ensureGpkgBrowserLoader();
       }
       const result = await ingestFiles(files);
+
+      // Working CRS for imports (matches importedMetadata below).
+      const WORKING_EPSG = 21037;
+      let points = result.points;
+      if (result.sourceCrs) {
+        const src = result.sourceCrs;
+        const needsTransform =
+          (src.epsg !== null && src.epsg !== WORKING_EPSG) || src.epsg === null;
+        if (needsTransform && points.length > 0) {
+          setProgress({ pct: 12, stage: "Reprojecting to working CRS" });
+          if (src.epsg === null) {
+            // Unregistered WKT definition — transform from the raw proj4 string.
+            const def = src.proj4;
+            points = points.map((p) => {
+              const [e, n] = transformFromDef(def, WORKING_EPSG, p.easting, p.northing);
+              return { ...p, easting: Number(e.toFixed(4)), northing: Number(n.toFixed(4)) };
+            });
+          } else {
+            const def = getCRS(src.epsg);
+            if (def) registerCrsDefinition(def, false);
+            points = points.map((p) => {
+              const [e, n] = transform(src.epsg!, WORKING_EPSG, p.easting, p.northing);
+              return { ...p, easting: Number(e.toFixed(4)), northing: Number(n.toFixed(4)) };
+            });
+          }
+          result.warnings.push(
+            `Reprojected ${points.length} vertices from ${src.name}${src.epsg ? ` (EPSG:${src.epsg})` : ""} to the working CRS.`,
+          );
+        }
+      }
+
       const importedMetadata = {
         id: "IMPORT-01",
         title: result.layerName,
@@ -203,7 +236,7 @@ export const App: React.FC = () => {
       };
       await executePipeline(
         { ...(selectedScenario as BenchmarkScenario), metadata: importedMetadata, points: [] },
-        result.points,
+        points,
         "reset",
         `Import: ${result.layerName}`
       );
@@ -215,6 +248,55 @@ export const App: React.FC = () => {
     } finally {
       setIsLoading(false);
       setProgress(null);
+    }
+  };
+
+  /** PostGIS layer import — same reset-document path as file imports. */
+  const handlePostgisImport = async (
+    points: SurveyPoint[],
+    layerName: string,
+    srid: number,
+    notes: string[],
+  ) => {
+    const WORKING_EPSG = 21037;
+    let pts = points;
+    const warnings = [...notes];
+    if (srid && srid !== WORKING_EPSG && pts.length > 0) {
+      setIsLoading(true);
+      setProgress({ pct: 20, stage: "Reprojecting PostGIS layer" });
+      try {
+        const def = getCRS(srid);
+        if (def) registerCrsDefinition(def, false);
+        pts = pts.map((p) => {
+          const [e, n] = transform(srid, WORKING_EPSG, p.easting, p.northing);
+          return { ...p, easting: Number(e.toFixed(4)), northing: Number(n.toFixed(4)) };
+        });
+        warnings.push(`Reprojected ${pts.length} vertices from EPSG:${srid} to the working CRS.`);
+      } finally {
+        setIsLoading(false);
+        setProgress(null);
+      }
+    }
+    const metadata = {
+      id: "PG-01",
+      title: layerName,
+      locality: "PostGIS source",
+      country: "—",
+      crs: "Arc 1960 / UTM zone 37S",
+      surveyorName: "PostGIS bridge (read-only)",
+      registrationNo: `SRID-${srid || "NA"}`,
+      date: new Date().toISOString().split("T")[0],
+      scale: "1:1,000",
+      organization: "MetaRDU GIS Workstation",
+    };
+    await executePipeline(
+      { ...(selectedScenario as BenchmarkScenario), metadata, points: [] },
+      pts,
+      "reset",
+      `PostGIS import: ${layerName}`,
+    );
+    if (warnings.length > 0) {
+      alert(`PostGIS import notes:\n\n${warnings.join("\n")}`);
     }
   };
 
@@ -316,6 +398,10 @@ export const App: React.FC = () => {
         )}
         {activeTab === "deedplan" && <DeedPlanViewer result={pipelineResult} />}
         {activeTab === "atlas" && <PlanningAtlasViewer result={pipelineResult} />}
+        {activeTab === "composer" && <ComposerPanel result={pipelineResult} />}
+        {activeTab === "postgis" && (
+          <PostgisPanel onImportPoints={handlePostgisImport} />
+        )}
         {activeTab === "datagrid" && (
           <AttributeTable
             result={pipelineResult}
