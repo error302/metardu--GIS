@@ -80,6 +80,9 @@ export const TraversePanel: React.FC<TraversePanelProps> = ({ result, onApplyPoi
       const a = bp[i];
       const c = bp[(i + 1) % bp.length];
       const inv = cogoInverse(a, c);
+      // Skip zero-length closure stubs (some documents store the first
+      // beacon again as the closing point — there is nothing to observe).
+      if (inv.distanceM < 1e-6) continue;
       rows.push({
         fromId: a.id,
         toId: c.id,

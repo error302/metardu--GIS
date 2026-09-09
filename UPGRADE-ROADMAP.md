@@ -199,7 +199,7 @@ Export Hub render through the template engine, real .gpkg downloaded from the
 browser and byte-verified, PostGIS panel connect/error paths, bridge
 read-only guards.
 
-### Phase D — The divergence (months 4+)
+### Phase D — The divergence (months 4+) — ✅ DELIVERED
 
 This is where "revolutionize" stops being a word and becomes a moat:
 
@@ -219,6 +219,28 @@ This is where "revolutionize" stops being a word and becomes a moat:
 4. **Edge-first collaboration.** When multi-user arrives, sync **project files**
    (CRDT over `.metardu.json`) rather than running a server product — matches
    the connectivity reality of the target market and keeps the offline promise.
+
+#### Phase D delivery notes (this branch)
+
+| Commitment | Status | Implementation |
+|---|---|---|
+| Provenance graph | ✅ | `src/core/provenance.ts` — a machine-readable source → process → figure graph built **only** from live pipeline state. Every figure node carries its method citation (registry-resolved), resolved inputs, and a stated tolerance/limitation — never bare. Deterministic FNV-1a integrity digest: any change to inputs, weights, or results changes it (tamper-evident). **Embedded in every export:** GeoJSON foreign member (RFC 7946 §6.1), LandXML comment block, GeoPackage `mr_provenance` attributes table (with digest header row), `.metardu.json` project file. A compact register renders on paper via a new composer **Provenance table element**. **Provenance tab** (Data group): digest, audited figures with expandable lineage, sources, processes with measured durations, JSON export. Locked by `tests/provenance.test.ts` (structure, referential integrity, digest determinism/tamper, project roundtrip, export embeds). |
+| Guided traverse workflow | ✅ | **Traverse tab** (Analysis group): enter field observations or **load the boundary traverse from the document** (zero-length closure stubs skipped), adjust by Bowditch against class tolerances (1:10,000 / 1:5,000 / 1:2,500), then **promote adjusted coordinates into the document** as an undoable command. |
+| Plain-language misclosure diagnostics | ✅ | `src/core/traverse-diagnostics.ts` — every sentence derived from the adjustment report: precision verdict against the class, misclosure in centimetres with error direction, east–west vs north–south axis bias with re-observation guidance, largest-correction leg, method disclosure. No fabricated guidance; failing traverses are told to re-observe, not to adjust past the failure. |
+| One-click lodgement package | ✅ | `src/core/export/lodgement.ts` — dependency-free ZIP writer (store + CRC-32) bundling: LandXML (carrying the provenance block), `provenance.json`, beacon + adjusted-traverse schedules (CSV), print-ready Form 4 SVG, and a `MANIFEST.txt` quoting the digest and real figures. Export Hub row added. Verified twice: structural parse-back in `tests/field-to-statute.test.ts` (41 assertions) and **Python `zipfile` interop** (CRC valid, all six entries readable). |
+| Sensitivity toggles in the export preview | ✅ | **Planning Atlas sensitivity rail** — MCDA weight/constraint sliders re-evaluate the suitability model live (indexed warm evaluation, debounced) and re-render the A3 sheet; live class-distribution bar; reset to document defaults; downloads are suffixed `_sensitivity` when weights differ. `renderTemplate` gained `RenderOptions`: the method & limitations note discloses the exact weights ("user-adjusted for sensitivity review" vs "document defaults") plus an explicit **uncertainty line** bounded by traverse precision. |
+| Versioned scenarios side-by-side | ✅ | `src/core/scenario-compare.ts` + **Scenario Compare tab** — geometry-free metric snapshots (area, precision, suitability mix, sinks, exposed assets, households, CAPEX) frozen **with the weights that produced them**; side-by-side table with deltas judged by direction of merit against a re-assignable baseline. Session-scoped, computed at capture time. |
+| Edge-first collaboration | ✅ | `src/core/crdt/crdt.ts` — dependency-free CRDT: LWW registers + add-wins point set under a total order on (lamport, replicaId); merge is idempotent, commutative, associative; tombstones with causal resurrection; bounded op-id memory. `project-crdt.ts` projects `.metardu.json` state to/from ops without inventing values. **Edge Sync tab** (Data group): persistent replica with incremental snapshot diffing (op ids unique forever), `.metardu-changes.json` export (idempotent replay), change-file merge, merged state becomes an undoable pipeline document. `bridge/sync-bridge.mjs` — zero-dependency in-memory op relay (health / `GET /ops?since=N` / `POST /ops` with dedup, 20 MB + 500k-op caps, envelope validation); memory-only, replicas stay authoritative, so offline always works. Locked by `tests/crdt.test.ts` (21 assertions incl. a two-replica concurrent-edit scenario: field crew vs office). |
+
+**Verification:** 18/18 test suites pass (was 14; +provenance, +field-to-statute,
++decision-documents, +crdt), `tsc` clean, production build green, all 11
+benchmark budgets honoured (pipeline @ 50k: 1.31 s). Manual QA (screenshots
+`phaseD-01..09`): provenance register with lineage, traverse loaded from the
+document boundary and adjusted (1:700,824 verdict with diagnostics), atlas
+sensitivity slider with on-sheet weights disclosure, scenario snapshots with
+delta table, Edge Sync replica export ("47 ops") and a live relay push
+("Pushed 47 ops … relay head at 47"). The relay was additionally smoke-tested
+with curl (accept, dedup, pull cursor, malformed-payload guards).
 
 ### Sequencing principle
 
