@@ -17,6 +17,7 @@ import { PipelineResult, SurveyPoint } from "./types/spatial";
 import { transform, crsEpsgFromMetadata, getCRS } from "./core/crs";
 import { createProjectSnapshot, downloadProjectFile, parseProjectFile } from "./core/project";
 import { useHistoryState } from "./hooks/use-history";
+import { initGeoidModel, subscribeGeoidStatus, GeoidStatus } from "./core/geoid/grid";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
@@ -25,6 +26,17 @@ export const App: React.FC = () => {
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState<{ pct: number; stage: string } | null>(null);
+
+  // Real geoid model — lazy-load the bundled EGM2008 East-Africa grid on mount.
+  const [geoidStatus, setGeoidStatus] = useState<GeoidStatus>({
+    state: "uninitialized",
+    model: "parametric",
+  });
+  useEffect(() => {
+    const unsub = subscribeGeoidStatus(setGeoidStatus);
+    initGeoidModel();
+    return unsub;
+  }, []);
 
   // Single immutable document with a bounded undo/redo command stack
   const doc = useHistoryState<PipelineResult | null>(null, "Workspace opened");
@@ -320,6 +332,7 @@ export const App: React.FC = () => {
         scenarioTitle={pipelineResult.metadata.title}
         telemetries={pipelineResult.telemetries}
         totalDurationMs={pipelineResult.totalDurationMs}
+        geoidStatus={geoidStatus}
       />
 
       {/* Export hub */}

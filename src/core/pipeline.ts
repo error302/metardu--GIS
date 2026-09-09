@@ -12,7 +12,7 @@ import {
   OffGridPlannerParams,
 } from "../types/spatial";
 import { parseRawSurveyText } from "./parser";
-import { reduceOrthometricHeight } from "./crs";
+import { reduceOrthometricHeight, getGeoidProvenance } from "./crs";
 import { CRS_EPSG_FROM_METADATA, toWGS84 } from "./crs";
 import { generateFeatureVectors } from "./feature-coding";
 import { generateTinMesh } from "./tin-engine";
@@ -94,11 +94,12 @@ export async function runAutonomousGisPipeline(
     };
   });
   const d1 = Number((performance.now() - t1).toFixed(1));
+  const geoid = getGeoidProvenance();
   telemetries.push({
     stepName: "2. Geodesy & Geoid MSL Reduction",
     durationMs: d1,
     status: "pass",
-    details: `EGM2008 / KEN_GEOID (H = h - N) applied. Orthometric elevations computed.`,
+    details: `Geoid model: ${geoid.model}. H = h − N applied; orthometric elevations computed.`,
   });
 
   // ── Step 3: Field-to-Finish Feature Vectorization ──

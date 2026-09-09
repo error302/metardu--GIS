@@ -1,0 +1,55 @@
+{
+  "model": "EGM2008",
+  "producer": "NGA EGM2008 2.5 arc-minute global grid (us_nga_egm08_25.tif, PROJ CDN)",
+  "format": "MTGEOD01",
+  "units": "N, metres above WGS 84 ellipsoid; stored as int16 centimetres",
+  "bounds": {
+    "latMax": 10.0,
+    "latMin": -8.0,
+    "lonMin": 26.0,
+    "lonMax": 46.0
+  },
+  "spacingArcMin": 2.5,
+  "rows": 433,
+  "cols": 481,
+  "nodata": -32768,
+  "anchors": [
+    {
+      "lat": 0.0,
+      "lon": 36.82,
+      "name": "Nairobi area",
+      "N": -13.3189
+    },
+    {
+      "lat": -4.05,
+      "lon": 39.67,
+      "name": "Mombasa",
+      "N": -29.198
+    },
+    {
+      "lat": 0.35,
+      "lon": 32.58,
+      "name": "Kampala",
+      "N": -12.9721
+    },
+    {
+      "lat": -6.8,
+      "lon": 39.28,
+      "name": "Dar es Salaam",
+      "N": -27.6735
+    },
+    {
+      "lat": -1.95,
+      "lon": 30.06,
+      "name": "Kigali",
+      "N": -8.8232
+    },
+    {
+      "lat": 9.03,
+      "lon": 38.74,
+      "name": "Addis Ababa",
+      "N": -7.0385
+    }
+  ],
+  "note": "Bilinear interpolation of the 2.5' grid. Interpolation error vs the full EGM2008 spherical-harmonic model is typically <= 0.1 m in smooth terrain and up to ~0.3 m over sharp geoid gradients."
+}

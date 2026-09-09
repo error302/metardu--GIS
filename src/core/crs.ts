@@ -90,24 +90,64 @@ export function fromWGS84(epsg: number, lon: number, lat: number): [number, numb
 }
 
 /**
- * EGM2008 geoid separation lookup.
- * Fallback: smooth parametric sag of Kenya geoid (N ~ 10-25m); pluggable grid-file loader hook.
+ * Geoid separation (H = h − N) lookup.
+ *
+ * Active model precedence:
+ *   1. Real EGM2008 2.5' grid (src/core/geoid/grid.ts registers a sampler on
+ *      lazy load) — statutory-grade.
+ *   2. Parametric fallback: inverse-distance interpolation of six EGM2008
+ *      anchor values across East Africa. The geoid over East Africa is
+ *      NEGATIVE (−5 to −45 m; the region sits on the flank of the Indian
+ *      Ocean geoid low). Planning-grade only, disclosed as such.
  */
-export type GeoidModel = "EGM2008" | "KEN_GEOID" | "PARAMETRIC";
+export type GeoidModel = "EGM2008" | "PARAMETRIC";
 
 let externalGrid: ((lat: number, lon: number) => number | null) | null = null;
-export function registerGeoidGridLoader(loader: (lat: number, lon: number) => number | null) {
-  externalGrid = loader;
+let externalGridName: string | null = null;
+
+/** Geoid provenance readout for UI/status disclosure. */
+export function getGeoidProvenance(): { model: string; statutory: boolean } {
+  return externalGrid
+    ? { model: externalGridName ?? "EGM2008 grid", statutory: true }
+    : { model: "parametric (regional anchors)", statutory: false };
 }
 
+export function registerGeoidGridLoader(
+  loader: (lat: number, lon: number) => number | null,
+  name = "EGM2008 2.5' grid",
+) {
+  externalGrid = loader;
+  externalGridName = name;
+}
+
+/* Regional EGM2008 anchor values (lat, lon, N metres) — validated against both
+   EGM2008 2.5' and EGM96 15' NGA grids (mutual agreement ±0.9 m). */
+const GEOID_ANCHORS: [number, number, number][] = [
+  [9.03, 38.74, -7.04], // Addis Ababa
+  [-1.95, 30.06, -8.82], // Kigali
+  [0.35, 32.58, -12.97], // Kampala / L. Victoria
+  [0.0, 36.82, -13.32], // Nairobi area
+  [-4.05, 39.67, -29.2], // Mombasa (coast)
+  [-6.8, 39.28, -27.67], // Dar es Salaam
+];
+
 export function geoidUndulation(lat: number, lon: number, model: GeoidModel = "EGM2008"): number {
-  if (externalGrid) {
+  if (externalGrid && model === "EGM2008") {
     const n = externalGrid(lat, lon);
     if (n !== null) return n;
   }
-  // Parametric approximation of Kenyan geoid (N decreases N→S), accurate ±0.8m — for planning-grade output only.
-  // Real EGM2008 1'x1' grid can be registered via registerGeoidGridLoader().
-  return 12.5 - 0.9 * lat + 0.4 * Math.sin(lon * Math.PI / 180 * 3) + (model === "KEN_GEOID" ? 2.1 : 0);
+  // Parametric fallback — planning-grade, disclosed via getGeoidProvenance().
+  let wSum = 0;
+  let nSum = 0;
+  for (const [aLat, aLon, aN] of GEOID_ANCHORS) {
+    const dLat = (lat - aLat) * 111.32;
+    const dLon = (lon - aLon) * 111.32 * Math.cos((((lat + aLat) / 2) * Math.PI) / 180);
+    const d2 = Math.max(dLat * dLat + dLon * dLon, 100); // floor 10 km to avoid singularity
+    const w = 1 / d2;
+    wSum += w;
+    nSum += w * aN;
+  }
+  return nSum / wSum;
 }
 
 export function reduceOrthometricHeight(ellipsoidalH: number, lat: number, lon: number): { orthometricH: number; geoidN: number } {

@@ -1,5 +1,6 @@
 import React from "react";
 import { PipelineTelemetry } from "../types/spatial";
+import type { GeoidStatus } from "../core/geoid/grid";
 
 export interface CursorReadout {
   easting: number;
@@ -19,6 +20,7 @@ interface StatusBarProps {
   scenarioTitle: string;
   telemetries: PipelineTelemetry[];
   totalDurationMs: number;
+  geoidStatus?: GeoidStatus;
 }
 
 /** Round to 3 significant figures — surveying convention for scale denominators. */
@@ -47,6 +49,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   scenarioTitle,
   telemetries,
   totalDurationMs,
+  geoidStatus,
 }) => {
   const pipelineSummary = telemetries
     .map((t) => `${t.stepName.includes(". ") ? t.stepName.split(". ")[1] : t.stepName} ${t.durationMs}ms`)
@@ -91,6 +94,37 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             <span className="text-ink-3">φ</span> {cursor.lat.toFixed(6)}°
             <span className="text-ink-3 mx-1.5">·</span>
             <span className="text-ink-3">λ</span> {cursor.lon.toFixed(6)}°
+          </span>
+        )}
+
+        <span className="w-px h-3.5 bg-line-strong shrink-0" />
+
+        {/* Geoid model provenance — the vertical datum behind every H readout */}
+        {geoidStatus && (
+          <span
+            className="whitespace-nowrap shrink-0 cursor-default"
+            title={
+              geoidStatus.state === "ready"
+                ? `Vertical datum: EGM2008 2.5' grid (NGA), bilinear. ` +
+                  `Coverage ${geoidStatus.info.bounds.latMax}°N..${geoidStatus.info.bounds.latMin}°S, ` +
+                  `${geoidStatus.info.bounds.lonMin}°E..${geoidStatus.info.bounds.lonMax}°E. ` +
+                  geoidStatus.info.accuracyNote
+                : geoidStatus.state === "unavailable"
+                  ? `EGM2008 grid unavailable (${geoidStatus.reason}) — using planning-grade ` +
+                    `parametric fallback. NOT for statutory height work.`
+                  : geoidStatus.state === "loading"
+                    ? "Loading EGM2008 grid…"
+                    : "Geoid model not initialized"
+            }
+          >
+            <span className="text-ink-3">Geoid</span>{" "}
+            {geoidStatus.state === "ready" ? (
+              <span className="tnum">EGM2008 2.5′</span>
+            ) : (
+              <span className="tnum text-ink-3">
+                {geoidStatus.state === "loading" ? "loading…" : "parametric*"}
+              </span>
+            )}
           </span>
         )}
 
