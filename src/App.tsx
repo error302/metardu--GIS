@@ -13,6 +13,7 @@ import { ExportHubModal } from "./components/ExportHubModal";
 import { BENCHMARK_SCENARIOS, BenchmarkScenario } from "./data/sample-surveys";
 import { pipelineService, PipelineProgressEvent } from "./core/pipeline-client";
 import { ingestFiles } from "./core/ingest";
+import { ensureGpkgBrowserLoader } from "./core/ingest/gpkg-browser";
 import { PipelineResult, SurveyPoint } from "./types/spatial";
 import { transform, crsEpsgFromMetadata, getCRS } from "./core/crs";
 import { createProjectSnapshot, downloadProjectFile, parseProjectFile } from "./core/project";
@@ -182,6 +183,11 @@ export const App: React.FC = () => {
     setIsLoading(true);
     setProgress({ pct: 0, stage: "Reading files" });
     try {
+      // Prepare the GeoPackage WASM engine only when a .gpkg is in the set.
+      if (files.some((f) => f.name.toLowerCase().endsWith(".gpkg"))) {
+        setProgress({ pct: 5, stage: "Loading GeoPackage engine" });
+        await ensureGpkgBrowserLoader();
+      }
       const result = await ingestFiles(files);
       const importedMetadata = {
         id: "IMPORT-01",

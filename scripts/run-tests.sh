@@ -8,7 +8,8 @@ for f in tests/*.test.ts; do
   name=$(basename "$f" .test.ts)
   out=".test-build/$name.mjs"
   echo "── $name ─────────────────────────────────────────"
-  if npx esbuild "$f" --bundle --platform=node --format=esm --outfile="$out" --log-level=warning; then
+  if npx esbuild "$f" --bundle --platform=node --format=esm --outfile="$out" --log-level=warning \
+    --banner:js="import { createRequire } from 'module'; const require = createRequire(import.meta.url); const __dirname = import.meta.dirname;"; then
     node "$out" || fail=1
   else
     echo "FAIL: bundling $name"

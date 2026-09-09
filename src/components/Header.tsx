@@ -154,7 +154,7 @@ export const Header: React.FC<HeaderProps> = ({
         </label>
         <label
           className="ui-btn"
-          title="Import Shapefile (.shp + .dbf) or GeoJSON"
+          title="Import Shapefile (.shp + .dbf), GeoJSON, or GeoPackage"
           style={{ cursor: "pointer" }}
         >
           <Import className="w-3.5 h-3.5" />
@@ -162,7 +162,7 @@ export const Header: React.FC<HeaderProps> = ({
           <input
             type="file"
             multiple
-            accept=".shp,.dbf,.shx,.prj,.geojson,.json"
+            accept=".shp,.dbf,.shx,.prj,.geojson,.json,.gpkg"
             onChange={(e) => {
               const files = Array.from(e.target.files ?? []);
               e.target.value = ""; // allow re-selecting the same file set

@@ -16,6 +16,17 @@ import {
   DbfRecord,
 } from "./shapefile";
 import { parseGeoJson, geometryToParts, GeoJsonFeature } from "./geojson";
+import { parseGpkg, configureSqlLoader, geomToFeatureKind, GpkgFeature } from "./gpkg";
+
+/* sql.js WASM loading is platform-specific:
+   - Browser: App calls ensureGpkgBrowserLoader() (see gpkg-browser.ts) before
+     routing files here — Vite resolves the wasm as a hashed asset chunk.
+   - Node/tests: call configureSqlLoader() with { wasmBinary } from node_modules.
+   If neither happened, the import below fails with a clear message. */
+async function ensureGpkgLoader(): Promise<void> {
+  // No-op placeholder — the loader must have been configured by the host.
+  // parseGpkg throws "sql.js loader not configured" otherwise.
+}
 
 export interface ImportResult {
   layerName: string;
@@ -169,7 +180,7 @@ export async function ingestFiles(fileList: File[]): Promise<ImportResult> {
     const dot = lower.lastIndexOf(".");
     const base = f.name.slice(0, dot);
     const ext = lower.slice(dot + 1);
-    if (ext === "geojson" || ext === "json") {
+    if (ext === "geojson" || ext === "json" || ext === "gpkg") {
       singletons.push(f);
       continue;
     }
@@ -240,8 +251,87 @@ export async function ingestFiles(fileList: File[]): Promise<ImportResult> {
     });
   }
 
-  // GeoJSON singletons
-  for (const f of singletons) {
+  // GeoPackage singletons
+  for (const f of singletons.filter((x) => x.name.toLowerCase().endsWith(".gpkg"))) {
+    await ensureGpkgLoader();
+    const buf = await f.arrayBuffer();
+    let parsed: Awaited<ReturnType<typeof parseGpkg>>;
+    try {
+      parsed = await parseGpkg(buf);
+    } catch (err) {
+      warnings.push(`${f.name}: ${(err as Error).message}`);
+      continue;
+    }
+    const layerKey = (parsed.layerName || f.name.replace(/\.gpkg$/i, "")).replace(/\s+/g, "_");
+    layerNames.push(layerKey);
+    if (parsed.srsId && parsed.srsId !== 4326) {
+      warnings.push(
+        `${f.name}: layer is EPSG:${parsed.srsId} — reproject it to the working CRS if coordinates look shifted`,
+      );
+    }
+    parsed.features.forEach((feat: GpkgFeature) => {
+      const kindShape = geomToFeatureKind(feat.geom);
+      const category = inferCategory(feat.properties as Record<string, unknown>);
+      const rawCode = inferRawCode(feat.properties as Record<string, unknown>);
+      const description = String(
+        feat.properties["name"] ?? feat.properties["NAME"] ?? `${layerKey} #${feat.fid + 1}`,
+      );
+      const props: Record<string, string | number | boolean> = {};
+      for (const [k, v] of Object.entries(feat.properties)) {
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") props[k] = v;
+      }
+      const pushPoint = (id: string, x: number, y: number, z: number, desc: string) => {
+        points.push(
+          makePoint(id, x, y, z, category, rawCode, desc, Object.keys(props).length ? props : undefined),
+        );
+        stats.vertices++;
+      };
+
+      switch (kindShape.kind) {
+        case "point":
+          stats.pointFeatures++;
+          pushPoint(`${layerKey}-${feat.fid + 1}`, kindShape.x, kindShape.y, kindShape.z ?? 0, description);
+          break;
+        case "multipoint":
+          stats.pointFeatures += kindShape.points.length;
+          kindShape.points.forEach(([x, y], vi) =>
+            pushPoint(`${layerKey}-${feat.fid + 1}-${vi + 1}`, x, y, 0, `${description} (v${vi + 1})`),
+          );
+          break;
+        case "polyline":
+          stats.lineFeatures++;
+          kindShape.parts.forEach((part, pi) =>
+            part.forEach(([x, y], vi) =>
+              pushPoint(
+                `${layerKey}-${feat.fid + 1}-${pi + 1}-${vi + 1}`,
+                x,
+                y,
+                0,
+                `${description} (p${pi + 1}v${vi + 1})`,
+              ),
+            ),
+          );
+          break;
+        case "polygon":
+          stats.polygonFeatures++;
+          kindShape.rings.forEach((ring, ri) =>
+            ring.forEach(([x, y], vi) =>
+              pushPoint(
+                `${layerKey}-${feat.fid + 1}-r${ri + 1}-${vi + 1}`,
+                x,
+                y,
+                0,
+                `${description} (r${ri + 1}v${vi + 1})`,
+              ),
+            ),
+          );
+          break;
+      }
+    });
+  }
+
+  // GeoJSON singletons (skip GeoPackage — handled above)
+  for (const f of singletons.filter((x) => !x.name.toLowerCase().endsWith(".gpkg"))) {
     layerNames.push(f.name.replace(/\.(geo)?json$/i, ""));
     const text = await f.text();
     let doc: ReturnType<typeof parseGeoJson>;
