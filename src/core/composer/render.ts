@@ -10,9 +10,13 @@
 import { PipelineResult, SurveyVector, McdaWeights } from "../../types/spatial";
 import { getGeoidProvenance } from "../crs";
 import { DEFAULT_MCDA_WEIGHTS } from "../mcda-suitability";
+import {
+  hillshadePaths, placeContourLabels, projectFacets, buildLocatorModel,
+  suitabilityBreaksLines, SUITABILITY_CLASS_ORDER,
+} from "../cartography";
 import { buildProvenanceGraph, provenanceCompactRows } from "../provenance";
 import {
-  ComposerElement, ComposerMapFrame, ComposerTable, ResolveContext,
+  ComposerElement, ComposerMapFrame, ComposerTable, ComposerLocator, ResolveContext,
   resolveFieldValue, resolveFooter, pageDimsMm, ComposerTemplate,
 } from "./template";
 import { substituteTextTokens } from "./presets";
@@ -179,6 +183,20 @@ const SUIT_FILL: Record<string, string> = {
   hazard: "#c85a4f",
 };
 
+/** Hairline cell borders — darker step of each class fill, keeps cells legible where they abut. */
+const SUIT_STROKE: Record<string, string> = {
+  optimal: "#3a753d",
+  suitable: "#7d9c42",
+  moderate: "#c29a3d",
+  restricted: "#b26a38",
+  hazard: "#9c423a",
+};
+
+/** Hypsometric contour inks — print-muted, index line carries more weight. */
+const CONTOUR_MINOR = "#C8CFD6";
+const CONTOUR_MAJOR = "#8E99A4";
+const CONTOUR_LABEL_INK = "#4A555E";
+
 function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
   const px = { x: el.x * PX_PER_MM, y: el.y * PX_PER_MM, w: el.w * PX_PER_MM, h: el.h * PX_PER_MM };
   const head = `
@@ -197,7 +215,22 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
 
   const L = el.layers;
 
-  // Suitability choropleth (spatially positioned cells)
+  // Shaded relief — TIN facet Lambertian shading (NW 315° / 45° sun),
+  // bucketed into ≤18 gray paths. Drawn first so every thematic layer
+  // reads on top of terrain form.
+  if (L.relief !== false && result.tin && result.tin.triangles.length > 0) {
+    const facets = projectFacets(
+      result.tin.triangles,
+      (e, n) => [proj.toX(e), proj.toY(n)] as [number, number],
+      (x, y) => proj.inFrame(x, y),
+    );
+    for (const p of hillshadePaths(facets)) {
+      parts.push(`<path d="${p.d}" fill="${p.fill}" fill-opacity="0.55"/>`);
+    }
+  }
+
+  // Suitability choropleth (spatially positioned cells; hazard class last,
+  // hairline borders in a darker step of each class fill)
   if (L.suitability && result.suitability.length > 0) {
     const cells = result.suitability;
     let sMinE = Infinity, sMaxE = -Infinity, sMinN = Infinity, sMaxN = -Infinity;
@@ -209,17 +242,31 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
     }
     const cellW = ((sMaxE - sMinE) / Math.sqrt(cells.length)) * proj.pxPerM;
     const cellPx = Math.max(2, cellW);
-    for (const c of cells) {
+    const ordered = [
+      ...cells.filter((c) => c.category !== "hazard"),
+      ...cells.filter((c) => c.category === "hazard"),
+    ];
+    const strokeBatch: string[] = [];
+    for (const c of ordered) {
       const cx = proj.toX(c.x);
       const cy = proj.toY(c.y);
       if (!proj.inFrame(cx, cy)) continue;
+      const fill = SUIT_FILL[c.category] ?? SUIT_FILL.moderate;
+      const stroke = SUIT_STROKE[c.category] ?? SUIT_STROKE.moderate;
       parts.push(
-        `<rect x="${f1(cx - cellPx / 2)}" y="${f1(cy - cellPx / 2)}" width="${f1(cellPx)}" height="${f1(cellPx)}" fill="${SUIT_FILL[c.category] ?? SUIT_FILL.moderate}" fill-opacity="0.82"/>`,
+        `<rect x="${f1(cx - cellPx / 2)}" y="${f1(cy - cellPx / 2)}" width="${f1(cellPx)}" height="${f1(cellPx)}" fill="${fill}" fill-opacity="0.78"/>`,
       );
+      if (cellPx >= 5) {
+        strokeBatch.push(
+          `<rect x="${f1(cx - cellPx / 2)}" y="${f1(cy - cellPx / 2)}" width="${f1(cellPx)}" height="${f1(cellPx)}" fill="none" stroke="${stroke}" stroke-width="0.4"/>`,
+        );
+      }
     }
+    parts.push(...strokeBatch);
   }
 
-  // Contours
+  // Contours — index lines carry more weight than intermediates
+  const contourLabels: { x: number; y: number; angleDeg: number; text: string }[] = [];
   if (L.contours && result.contours.length > 0) {
     const stride = Math.max(1, Math.ceil(result.contours.length / 300));
     for (let i = 0; i < result.contours.length; i += stride) {
@@ -228,8 +275,15 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
         .filter(([e, n]) => proj.inFrame(proj.toX(e), proj.toY(n)))
         .map(([e, n]) => `${f1(proj.toX(e))},${f1(proj.toY(n))}`)
         .join(" ");
-      if (pts) parts.push(`<polyline points="${pts}" fill="none" stroke="${c.isMajor ? "#CBD5E1" : "#E2E8F0"}" stroke-width="${c.isMajor ? 1.2 : 0.7}"/>`);
+      if (pts) parts.push(`<polyline points="${pts}" fill="none" stroke="${c.isMajor ? CONTOUR_MAJOR : CONTOUR_MINOR}" stroke-width="${c.isMajor ? 1.1 : 0.6}"/>`);
     }
+    // Index-contour elevation labels — halo text, upright, budgeted.
+    contourLabels.push(...placeContourLabels(
+      result.contours,
+      (e, n) => [proj.toX(e), proj.toY(n)] as [number, number],
+      (x, y) => proj.inFrame(x, y),
+      { spacingPx: Math.max(90, px.w / 5), maxLabels: 40 },
+    ));
   }
 
   // Survey vectors (data-driven layer colors)
@@ -246,12 +300,14 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
     }
   }
 
-  // Boundary polygon
+  // Boundary polygon — white casing under the stroke for print contrast
   if (L.boundary && result.boundary && result.boundary.points.length >= 3) {
     const d = result.boundary.points
       .map((p, i) => `${i === 0 ? "M" : "L"} ${f1(proj.toX(p.easting))} ${f1(proj.toY(p.northing))}`)
       .join(" ") + " Z";
-    parts.push(`<path d="${d}" fill="#3B82F6" fill-opacity="0.08" stroke="#1D4ED8" stroke-width="2.5" stroke-linejoin="round"/>`);
+    parts.push(`<path d="${d}" fill="#3B82F6" fill-opacity="0.08"/>`);
+    parts.push(`<path d="${d}" fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-opacity="0.85" stroke-linejoin="round"/>`);
+    parts.push(`<path d="${d}" fill="none" stroke="#1D4ED8" stroke-width="2.2" stroke-linejoin="round"/>`);
   }
 
   // Hazard sinks — dashed impact ring + core dot
@@ -321,7 +377,19 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
 
   parts.push("</g>"); // clip
 
-  // Graticule — drawn over layers, labels clear the frame edge
+  // Contour elevation labels — emitted above all geometry, still clipped
+  // to the frame (halo keeps them legible over any underlying fill).
+  if (contourLabels.length > 0) {
+    parts.push(`<g clip-path="url(#${clipId})">`);
+    for (const lb of contourLabels) {
+      parts.push(
+        `<text x="0" y="0" transform="translate(${f1(lb.x)},${f1(lb.y)}) rotate(${f1(lb.angleDeg)})" font-size="7" font-family="monospace" fill="${CONTOUR_LABEL_INK}" text-anchor="middle" paint-order="stroke" stroke="#F4F6F8" stroke-width="2.4" stroke-linejoin="round">${esc(lb.text)}</text>`,
+      );
+    }
+    parts.push("</g>");
+  }
+
+  // Graticule — drawn over layers, ticks cross the frame edge, labels clear it
   if (L.graticule) {
     const rangeE = proj.bounds.maxE - proj.bounds.minE;
     const rangeN = proj.bounds.maxN - proj.bounds.minN;
@@ -332,6 +400,8 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
       if (sx < px.x || sx > px.x + px.w) continue;
       parts.push(
         `<line x1="${f1(sx)}" y1="${f1(px.y)}" x2="${f1(sx)}" y2="${f1(px.y + px.h)}" stroke="#CBD5E1" stroke-width="0.75" stroke-dasharray="3,3"/>` +
+        `<line x1="${f1(sx)}" y1="${f1(px.y)}" x2="${f1(sx)}" y2="${f1(px.y + 5)}" stroke="#475569" stroke-width="1.2"/>` +
+        `<line x1="${f1(sx)}" y1="${f1(px.y + px.h - 5)}" x2="${f1(sx)}" y2="${f1(px.y + px.h)}" stroke="#475569" stroke-width="1.2"/>` +
         `<text x="${f1(sx)}" y="${f1(px.y - 5)}" font-size="8" font-family="monospace" fill="#64748B" text-anchor="middle">${Math.round(e).toLocaleString("en-US")}m E</text>`,
       );
     }
@@ -340,6 +410,8 @@ function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
       if (sy < px.y || sy > px.y + px.h) continue;
       parts.push(
         `<line x1="${f1(px.x)}" y1="${f1(sy)}" x2="${f1(px.x + px.w)}" y2="${f1(sy)}" stroke="#CBD5E1" stroke-width="0.75" stroke-dasharray="3,3"/>` +
+        `<line x1="${f1(px.x)}" y1="${f1(sy)}" x2="${f1(px.x + 5)}" y2="${f1(sy)}" stroke="#475569" stroke-width="1.2"/>` +
+        `<line x1="${f1(px.x + px.w - 5)}" y1="${f1(sy)}" x2="${f1(px.x + px.w)}" y2="${f1(sy)}" stroke="#475569" stroke-width="1.2"/>` +
         `<text x="${f1(px.x - 6)}" y="${f1(sy + 3)}" font-size="8" font-family="monospace" fill="#64748B" text-anchor="end">${Math.round(n).toLocaleString("en-US")}m N</text>`,
       );
     }
@@ -566,7 +638,16 @@ function suitabilityPct(result: PipelineResult, cat: string): number | null {
   return Math.round((n / result.suitability.length) * 100);
 }
 
-function renderLegend(result: PipelineResult, el: Extract<ComposerElement, { kind: "legend" }>): string {
+function suitabilityCount(result: PipelineResult, cat: string): number | null {
+  if (result.suitability.length === 0) return null;
+  return result.suitability.filter((c) => c.category === cat).length;
+}
+
+function renderLegend(
+  result: PipelineResult,
+  el: Extract<ComposerElement, { kind: "legend" }>,
+  sheetRelief: boolean,
+): string {
   const out: string[] = [`<g id="${esc(el.id)}">`];
   const x0 = el.x * PX_PER_MM;
   let y = el.y * PX_PER_MM;
@@ -587,6 +668,21 @@ function renderLegend(result: PipelineResult, el: Extract<ComposerElement, { kin
     `<text x="${f1(x0 + 18)}" y="${f1(y + 9)}" font-size="8.5" fill="#475569">Boundary beacon</text>`,
   );
   y += 15;
+  if (result.contours.length > 0) {
+    out.push(
+      `<line x1="${f1(x0)}" y1="${f1(y + 3)}" x2="${f1(x0 + 12)}" y2="${f1(y + 3)}" stroke="#8E99A4" stroke-width="1.2"/>` +
+      `<line x1="${f1(x0)}" y1="${f1(y + 8)}" x2="${f1(x0 + 12)}" y2="${f1(y + 8)}" stroke="#C8CFD6" stroke-width="0.7"/>` +
+      `<text x="${f1(x0 + 18)}" y="${f1(y + 9)}" font-size="8.5" fill="#475569">Contours — index (labelled) · intermediate</text>`,
+    );
+    y += 15;
+  }
+  if (result.buffers.length > 0) {
+    out.push(
+      `<rect x="${f1(x0)}" y="${f1(y)}" width="12" height="12" fill="#d9a441" fill-opacity="0.15" stroke="#a07424" stroke-width="1" stroke-dasharray="3,2"/>` +
+      `<text x="${f1(x0 + 18)}" y="${f1(y + 9)}" font-size="8.5" fill="#475569">Statutory corridor reserve</text>`,
+    );
+    y += 15;
+  }
   if (result.hazardSinks.length > 0) {
     out.push(
       `<circle cx="${f1(x0 + 6)}" cy="${f1(y + 6)}" r="7" fill="none" stroke="#c85a4f" stroke-width="1.2" stroke-dasharray="2,2"/>` +
@@ -595,14 +691,40 @@ function renderLegend(result: PipelineResult, el: Extract<ComposerElement, { kin
     );
     y += 15;
   }
-  for (const cat of ["optimal", "suitable", "moderate", "restricted", "hazard"] as const) {
-    const pct = suitabilityPct(result, cat);
-    if (pct === null) continue;
+  if (result.energyClusters.length > 0) {
     out.push(
-      `<rect x="${f1(x0)}" y="${f1(y)}" width="12" height="12" fill="${SUIT_FILL[cat]}"/>` +
-      `<text x="${f1(x0 + 18)}" y="${f1(y + 9)}" font-size="8.5" fill="#475569">${cat[0].toUpperCase()}${cat.slice(1)} ${pct}%</text>`,
+      `<circle cx="${f1(x0 + 6)}" cy="${f1(y + 6)}" r="6" fill="none" stroke="#a06a1f" stroke-width="1.3"/>` +
+      `<circle cx="${f1(x0 + 6)}" cy="${f1(y + 6)}" r="1.6" fill="#a06a1f"/>` +
+      `<text x="${f1(x0 + 18)}" y="${f1(y + 9)}" font-size="8.5" fill="#475569">Settlement cluster (radius ∝ households)</text>`,
     );
     y += 15;
+  }
+  if (sheetRelief) {
+    out.push(
+      `<rect x="${f1(x0)}" y="${f1(y)}" width="12" height="12" fill="url(#legend_relief_ramp)" stroke="#CBD5E1" stroke-width="0.5"/>` +
+      `<text x="${f1(x0 + 18)}" y="${f1(y + 9)}" font-size="8.5" fill="#475569">Shaded relief (TIN, sun NW 315° / 45°)</text>`,
+    );
+    y += 15;
+  }
+  const anySuit = SUITABILITY_CLASS_ORDER.some((cat) => suitabilityPct(result, cat) !== null);
+  if (anySuit) {
+    for (const cat of SUITABILITY_CLASS_ORDER) {
+      const pct = suitabilityPct(result, cat);
+      if (pct === null) continue;
+      const n = suitabilityCount(result, cat) ?? 0;
+      out.push(
+        `<rect x="${f1(x0)}" y="${f1(y)}" width="12" height="12" fill="${SUIT_FILL[cat]}" stroke="${SUIT_STROKE[cat]}" stroke-width="0.5"/>` +
+        `<text x="${f1(x0 + 18)}" y="${f1(y + 9)}" font-size="8.5" fill="#475569">${cat[0].toUpperCase()}${cat.slice(1)} ${pct}% (n=${n.toLocaleString("en-US")})</text>`,
+      );
+      y += 15;
+    }
+    // Classification breaks — disclosed so every colour is re-derivable.
+    for (const line of suitabilityBreaksLines()) {
+      out.push(
+        `<text x="${f1(x0)}" y="${f1(y + 9)}" font-size="6.3" font-family="monospace" fill="#64748B">${esc(line)}</text>`,
+      );
+      y += 9;
+    }
   }
   out.push("</g>");
   return out.join("\n");
@@ -635,15 +757,31 @@ function renderScaleBar(
   const barW = segGroundPx * 4;
   const segLabel = segMetres >= 1000 ? `${(segMetres / 1000).toLocaleString("en-US")}km` : `${segMetres.toLocaleString("en-US")}m`;
   const out: string[] = [`<g id="${esc(el.id)}" transform="translate(${f1(el.x * PX_PER_MM)},${f1(el.y * PX_PER_MM)})">`];
-  for (let i = 0; i < 4; i++) {
+  // Alternating bar with the first segment subdivided into two half-steps
+  // (classic atlas convention; the alternation stays unambiguous).
+  const half = segGroundPx / 2;
+  out.push(`<rect x="0" y="0" width="${f1(half)}" height="5" fill="#0F172A" stroke="#0F172A" stroke-width="0.5"/>`);
+  out.push(`<rect x="${f1(half)}" y="0" width="${f1(half)}" height="5" fill="#FFFFFF" stroke="#0F172A" stroke-width="0.5"/>`);
+  for (let i = 1; i < 4; i++) {
     out.push(
-      `<rect x="${f1(i * segGroundPx)}" y="0" width="${f1(segGroundPx)}" height="5" fill="${i % 2 === 0 ? "#0F172A" : "#FFFFFF"}" stroke="#0F172A" stroke-width="0.5"/>`,
+      `<rect x="${f1(i * segGroundPx)}" y="0" width="${f1(segGroundPx)}" height="5" fill="${i % 2 === 1 ? "#0F172A" : "#FFFFFF"}" stroke="#0F172A" stroke-width="0.5"/>`,
     );
   }
-  for (let i = 0; i <= 4; i++) {
-    const v = i === 4 ? segLabel : String(i * segMetres);
-    out.push(`<text x="${f1(i * segGroundPx)}" y="-3" font-size="7.5" font-family="monospace" fill="#0F172A" text-anchor="${i === 0 ? "start" : i === 4 ? "end" : "middle"}">${esc(v)}</text>`);
+  // Ticks + labels at 0, ½, 1, 2, 3, 4 segment positions.
+  const ticks: [number, string, "start" | "middle" | "end"][] = [
+    [0, "0", "start"],
+    [half, segMetres >= 1000 ? `${(segMetres / 2000).toLocaleString("en-US")}` : `${(segMetres / 2).toLocaleString("en-US")}`, "middle"],
+    [segGroundPx, segLabel, "middle"],
+    [2 * segGroundPx, segMetres >= 1000 ? `${((2 * segMetres) / 1000).toLocaleString("en-US")}km` : `${(2 * segMetres).toLocaleString("en-US")}`, "middle"],
+    [3 * segGroundPx, segMetres >= 1000 ? `${((3 * segMetres) / 1000).toLocaleString("en-US")}km` : `${(3 * segMetres).toLocaleString("en-US")}`, "middle"],
+    [4 * segGroundPx, segMetres >= 1000 ? `${((4 * segMetres) / 1000).toLocaleString("en-US")}km` : `${(4 * segMetres).toLocaleString("en-US")}`, "end"],
+  ];
+  for (const [tx, tv, anchor] of ticks) {
+    out.push(`<text x="${f1(tx)}" y="-3" font-size="7.5" font-family="monospace" fill="#0F172A" text-anchor="${anchor}">${esc(tv)}</text>`);
   }
+  out.push(
+    `<text x="${f1(4 * segGroundPx + 8)}" y="5" font-size="6.5" fill="#64748B">grid metres</text>`,
+  );
   out.push("</g>");
   return out.join("\n");
 }
@@ -782,6 +920,103 @@ function renderText(el: Extract<ComposerElement, { kind: "text" }>): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* Locator (index) inset                                                */
+/* ------------------------------------------------------------------ */
+
+function renderLocator(result: PipelineResult, el: ComposerLocator): string {
+  const w = el.w * PX_PER_MM;
+  const h = el.h * PX_PER_MM;
+  const x0 = el.x * PX_PER_MM;
+  const y0 = el.y * PX_PER_MM;
+  const out: string[] = [`<g id="${esc(el.id)}">`];
+
+  let y = y0;
+  if (el.title) {
+    out.push(`<text x="${f1(x0)}" y="${f1(y + 8)}" font-size="8" font-weight="700" fill="#475569" letter-spacing="0.5">${esc(el.title)}</text>`);
+    y += 16;
+  }
+  const frameH = h - (y - y0) - 14; // reserve a caption line
+
+  // Feature extent: the adjusted boundary when present, else all surveyed points.
+  let minE = Infinity, maxE = -Infinity, minN = Infinity, maxN = -Infinity;
+  const grow = (e: number, n: number) => {
+    if (e < minE) minE = e;
+    if (e > maxE) maxE = e;
+    if (n < minN) minN = n;
+    if (n > maxN) maxN = n;
+  };
+  if (result.boundary) for (const p of result.boundary.points) grow(p.easting, p.northing);
+  if (!isFinite(minE)) for (const p of result.points) grow(p.easting, p.northing);
+  const model = isFinite(minE) && frameH > 10
+    ? buildLocatorModel({ minE, maxE, minN, maxN }, result.metadata.crs)
+    : null;
+
+  if (!model) {
+    out.push(
+      `<rect x="${f1(x0)}" y="${f1(y)}" width="${f1(w)}" height="${f1(Math.max(14, frameH))}" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="0.75"/>` +
+      `<text x="${f1(x0 + w / 2)}" y="${f1(y + Math.max(14, frameH) / 2 + 3)}" font-size="7" fill="#94A3B8" text-anchor="middle">Locator needs a boundary or points</text>`,
+    );
+    out.push("</g>");
+    return out.join("\n");
+  }
+
+  // Aspect-true fit of the grid window into the element box.
+  const win = model.window;
+  const pxPerM = Math.min(w / (win.maxE - win.minE), frameH / (win.maxN - win.minN));
+  const gw = (win.maxE - win.minE) * pxPerM;
+  const gh = (win.maxN - win.minN) * pxPerM;
+  const gx = x0 + (w - gw) / 2;
+  const gy = y + (frameH - gh) / 2;
+  const toX = (e: number) => gx + (e - win.minE) * pxPerM;
+  const toY = (n: number) => gy + gh - (n - win.minN) * pxPerM;
+
+  out.push(`<rect x="${f1(gx)}" y="${f1(gy)}" width="${f1(gw)}" height="${f1(gh)}" fill="#F8FAFC" stroke="#94A3B8" stroke-width="0.75"/>`);
+
+  // 100 km grid with kilometre labels on the window edges.
+  for (const e of model.eastings) {
+    const sx = toX(e);
+    if (sx < gx - 0.5 || sx > gx + gw + 0.5) continue;
+    out.push(
+      `<line x1="${f1(sx)}" y1="${f1(gy)}" x2="${f1(sx)}" y2="${f1(gy + gh)}" stroke="#C9D2DB" stroke-width="0.6"/>` +
+      `<text x="${f1(sx)}" y="${f1(gy + gh + 9)}" font-size="5.8" font-family="monospace" fill="#64748B" text-anchor="middle">${Math.round(e / 1000)}</text>`,
+    );
+  }
+  for (const n of model.northings) {
+    const sy = toY(n);
+    if (sy < gy - 0.5 || sy > gy + gh + 0.5) continue;
+    out.push(
+      `<line x1="${f1(gx)}" y1="${f1(sy)}" x2="${f1(gx + gw)}" y2="${f1(sy)}" stroke="#C9D2DB" stroke-width="0.6"/>` +
+      `<text x="${f1(gx - 3)}" y="${f1(sy + 2)}" font-size="5.8" font-family="monospace" fill="#64748B" text-anchor="end">${Math.round(n / 1000)}</text>`,
+    );
+  }
+
+  // Parcel extent box, labelled when a parcel number exists.
+  if (model.extent) {
+    const ex0 = toX(model.extent.minE);
+    const ex1 = toX(model.extent.maxE);
+    const ey0 = toY(model.extent.maxN);
+    const ey1 = toY(model.extent.minN);
+    out.push(
+      `<rect x="${f1(ex0)}" y="${f1(ey0)}" width="${f1(Math.max(2.5, ex1 - ex0))}" height="${f1(Math.max(2.5, ey1 - ey0))}" fill="#EF4444" fill-opacity="0.25" stroke="#B91C1C" stroke-width="1"/>`,
+    );
+    if (result.boundary?.parcelNo && ex1 - ex0 > 8) {
+      out.push(
+        `<text x="${f1((ex0 + ex1) / 2)}" y="${f1(ey0 - 2.5)}" font-size="6" font-family="monospace" fill="#B91C1C" text-anchor="middle">${esc(result.boundary.parcelNo)}</text>`,
+      );
+    }
+  }
+
+  const zoneTxt = model.zone
+    ? `UTM zone ${model.zone.zone}${model.zone.south ? "S" : "N"}`
+    : "grid coordinates (CRS not UTM)";
+  out.push(
+    `<text x="${f1(x0)}" y="${f1(y + frameH + 11)}" font-size="6.5" font-family="monospace" fill="#64748B">100 km grid · ${esc(zoneTxt)} · extent box = parcel</text>`,
+  );
+  out.push("</g>");
+  return out.join("\n");
+}
+
+/* ------------------------------------------------------------------ */
 /* Sheet assembly                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -796,6 +1031,13 @@ export function renderTemplate(template: ComposerTemplate, result: PipelineResul
   body.push(`<rect x="0" y="0" width="${f1(W)}" height="${f1(H)}" fill="#FFFFFF"/>`);
   body.push(`<rect x="${f1(8 * PX_PER_MM)}" y="${f1(8 * PX_PER_MM)}" width="${f1(W - 16 * PX_PER_MM)}" height="${f1(H - 16 * PX_PER_MM)}" fill="none" stroke="#0F172A" stroke-width="2.5"/>`);
   body.push(`<rect x="${f1(10 * PX_PER_MM)}" y="${f1(10 * PX_PER_MM)}" width="${f1(W - 20 * PX_PER_MM)}" height="${f1(H - 20 * PX_PER_MM)}" fill="none" stroke="#94A3B8" stroke-width="0.75"/>`);
+
+  // Shared defs — relief ramp for the legend swatch.
+  body.push(
+    `<defs><linearGradient id="legend_relief_ramp" x1="0" y1="0" x2="1" y2="0">` +
+    `<stop offset="0" stop-color="rgb(150,150,150)"/><stop offset="0.5" stop-color="rgb(210,210,210)"/><stop offset="1" stop-color="rgb(255,255,255)"/>` +
+    `</linearGradient></defs>`,
+  );
 
   // Header band (token-substituted with live metadata)
   if (template.header) {
@@ -813,10 +1055,12 @@ export function renderTemplate(template: ComposerTemplate, result: PipelineResul
 
   // Elements — collect map-frame resolutions for scale bars
   const frameRes: { id: string; pxPerM: number }[] = [];
+  let sheetRelief = false;
   for (const el of template.elements) {
     if (el.kind === "map-frame") {
       const proj = buildFrameProj(result, el);
       if (proj) frameRes.push({ id: el.id, pxPerM: proj.pxPerM });
+      if (el.layers.relief !== false && result.tin && result.tin.triangles.length > 0) sheetRelief = true;
     }
   }
 
@@ -825,7 +1069,7 @@ export function renderTemplate(template: ComposerTemplate, result: PipelineResul
       case "map-frame": body.push(renderMapFrame(result, el)); break;
       case "table": body.push(renderTable(result, el)); break;
       case "kpi-strip": body.push(renderKpiStrip(result, el)); break;
-      case "legend": body.push(renderLegend(result, el)); break;
+      case "legend": body.push(renderLegend(result, el, sheetRelief)); break;
       case "north-arrow": body.push(renderNorthArrow(el)); break;
       case "scale-bar": body.push(renderScaleBar(el, frameRes)); break;
       case "method-note": body.push(renderMethodNote(result, el, options)); break;
@@ -833,6 +1077,7 @@ export function renderTemplate(template: ComposerTemplate, result: PipelineResul
       case "certification": body.push(renderCertification(result, el)); break;
       case "approval-stamp": body.push(renderApprovalStamp(result, el)); break;
       case "signoff": body.push(renderSignoff(result, el)); break;
+      case "locator": body.push(renderLocator(result, el)); break;
       case "text": body.push(renderText({ ...el, text: substituteTextTokens(el.text, result.metadata) })); break;
     }
   }

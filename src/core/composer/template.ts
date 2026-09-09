@@ -44,6 +44,8 @@ export interface MapFrameLayers {
   hazards: boolean;
   energy: boolean;
   graticule: boolean;
+  /** TIN facet shaded relief (additive v1 field; defaults to true). */
+  relief?: boolean;
 }
 
 export interface ComposerMapFrame {
@@ -176,6 +178,18 @@ export interface ComposerSignoff {
   rightRole: string;
 }
 
+/**
+ * Locator (index) inset: the parcel extent on a 100 km UTM grid, with the
+ * zone captioned when the CRS encodes one. Classic atlas furniture — a
+ * reader can see where the sheet sits in its zone without external data.
+ */
+export interface ComposerLocator {
+  kind: "locator";
+  id: string;
+  x: number; y: number; w: number; h: number;
+  title?: string;
+}
+
 export type ComposerElement =
   | ComposerMapFrame
   | ComposerTitleBlock
@@ -188,7 +202,8 @@ export type ComposerElement =
   | ComposerMethodNote
   | ComposerCertification
   | ComposerApprovalStamp
-  | ComposerSignoff;
+  | ComposerSignoff
+  | ComposerLocator;
 
 export interface ComposerTemplate {
   id: string;

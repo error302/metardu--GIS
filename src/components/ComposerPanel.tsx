@@ -38,6 +38,7 @@ const ELEMENT_LABELS: Record<ComposerElement["kind"], string> = {
   certification: "Certification",
   "approval-stamp": "Approval stamp",
   signoff: "Signoff",
+  locator: "Locator inset",
 };
 
 export const ComposerPanel: React.FC<ComposerPanelProps> = ({ result }) => {

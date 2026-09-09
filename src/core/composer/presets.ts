@@ -116,6 +116,18 @@ export function atlasPreset(): ComposerTemplate {
       },
       { kind: "legend", id: "legend", x: 14, y: 210, w: 70, title: "MAP KEY" },
       {
+        kind: "locator",
+        id: "locator",
+        x: 96, y: 210, w: 62, h: 48,
+        title: "LOCATOR",
+      },
+      {
+        kind: "scale-bar",
+        id: "scalebar",
+        x: 168, y: 242, w: 42,
+        mapFrameId: "choropleth",
+      },
+      {
         kind: "table",
         id: "hazards",
         x: 252, y: 58, w: 154,

@@ -18,6 +18,17 @@ export const DEFAULT_MCDA_WEIGHTS: McdaWeights = {
 };
 
 /**
+ * Class boundaries applied to the composite score (0–100). Single source
+ * of truth: the engine classifies with these, and the print legend
+ * discloses them verbatim so every colour on a sheet is re-derivable.
+ */
+export const SUITABILITY_CLASS_BREAKS = {
+  optimalMin: 78,
+  suitableMin: 60,
+  moderateMin: 40,
+} as const;
+
+/**
  * Prebuilt spatial context — amortizes index construction across repeated
  * evaluations (interactive weight sliders rebuild the grid many times on the
  * same terrain/features).
@@ -159,9 +170,9 @@ export function evaluateSuitabilityGrid(
       );
 
       let category: SuitabilityCell["category"] = "moderate";
-      if (compositeScore >= 78) category = "optimal";
-      else if (compositeScore >= 60) category = "suitable";
-      else if (compositeScore >= 40) category = "moderate";
+      if (compositeScore >= SUITABILITY_CLASS_BREAKS.optimalMin) category = "optimal";
+      else if (compositeScore >= SUITABILITY_CLASS_BREAKS.suitableMin) category = "suitable";
+      else if (compositeScore >= SUITABILITY_CLASS_BREAKS.moderateMin) category = "moderate";
       else category = "restricted";
 
       cells.push({
