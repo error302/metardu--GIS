@@ -110,6 +110,8 @@ export interface CorridorBuffer {
   reserveWidthM: number;
   leftOffset: [number, number][];
   rightOffset: [number, number][];
+  /** Closed, simple corridor ring (round joins, flat caps; first vertex repeated last). */
+  polygon: [number, number][];
   areaSqM: number;
   encroachmentDetected: boolean;
 }
