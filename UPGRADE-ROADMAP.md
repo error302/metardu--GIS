@@ -166,16 +166,38 @@ other half of the data-ingress story — without giving up the offline promise.*
  pick, DEM probe chip, and a real `.gpkg` imported end-to-end in the UI
  (point + polyline + polygon + Z point → 10 vertices).
 
-### Phase C — Desktop-grade (months 2–4)
+### Phase C — Desktop-grade (months 2–4) — ✅ DELIVERED (client-side scope)
 
+*Goal: template-driven statutory output, write-side interoperability, and a
+path into municipal databases — without breaking the offline promise.*
+
+- **Print composer v2:** template-driven layouts (user-placed map frames,
+  legends, tables) generating the Form 4 and Atlas from templates instead of
+  bespoke SVG strings — same visual standard, user-configurable.
 - **PROJ WASM** for pipeline datum transformations beyond the towgs84 pair.
 - **GDAL WASM** (or a Tauri sidecar, as prior findings suggested) for
   read/write across the full format zoo, including GeoPackage transactional
   editing.
-- **Print composer v2:** template-driven layouts (user-placed map frames,
-  legends, tables) generating the Form 4 and Atlas from templates instead of
-  bespoke SVG strings — same visual standard, user-configurable.
 - **PostGIS connection** for municipal deployments (read-mostly sync).
+
+#### Phase C delivery notes (this branch)
+
+| Commitment | Status | Implementation |
+|---|---|---|
+| Print composer v2 | ✅ | `src/core/composer/` — versioned template schema (ISO A4–A1, mm-true geometry, 12 element kinds: map frame with fit/fixed-scale + layer toggles, computed tables, KPI strips, legends, method-note provenance block, certification/approval/signoff blocks, text with metadata tokens). `render.ts` renders any template against live pipeline state at 96 dpi — the engine physically cannot fabricate figures (every value resolves from `PipelineResult`, missing data renders as an em-dash). **Form 4 and Planning Atlas are now generated from templates** (`presets.ts`); the bespoke SVG exporters were deleted. New **Print Composer tab**: template/page/element rails, per-element properties (fit mode, fixed 1:N, layer toggles, text editing), live A-series preview, SVG download, direct print (`@page` sized), template save/load JSON. Both statutory viewers and the Export Hub route through the same engine — one code path, user-configurable. |
+| GeoPackage write path | ✅ | `src/core/export/gpkg-writer.ts` — OGC-conformant writer on the shared lazy sql.js engine: `application_id 'GPKG'`, `user_version` 1.3, mandatory SRS rows (−1/0/4326) + working CRS with proj4 definition, `gpkg_contents` with computed extents, `gpkg_geometry_columns`, and three feature tables (`mr_beacons` POINT / `mr_vectors` LINESTRING / `mr_boundary` POLYGON) with typed attributes and GP binary blobs (XY envelope, little-endian WKB, closed rings). Export Hub row added; verified end-to-end **from the browser**: the downloaded file decodes with correct magic, application_id, contents rows, and geometry (21 beacons / 4 vectors / parcel polygon with attributes). |
+| .prj / WKT CRS ingest | ✅ | `src/core/crs-wkt.ts` — dependency-free WKT tokenizer + projection builders (TM/UTM, LCC 1SP/2SP, Mercator 1SP/2SP, Cassini, Albers, LAEA, Stereographic, HOM, Krovak), datum/spheroid resolution (+a/+rf or +ellps aliases), TOWGS84 passthrough. EPSG recovery via AUTHORITY tags or parameter-matching against the built-in registry; when identified, the **canonical registry definition is adopted** so the real datum shift applies even though ESRI WKT omits `towgs84`. Every parse validates with a real proj4 round-trip. `ingestFiles` now returns `sourceCrs` and App reprojects to the working CRS automatically with a disclosed note (replaces the old "verify the CRS" warning). Real ESRI `Arc_1960_UTM_Zone_37S` and OGC bodies covered by tests. |
+| PostGIS connection | ✅ (read path) | `src/core/postgis/` — EWKB parser (SRID/Z/M flags, collections with nested byte-order bytes, HexEWKB) + bridge client that fetches layers as `ST_AsHexEWKB` and routes them through the same ingest mapping as Shapefile/GeoPackage, with SRID-based reprojection on import. `bridge/postgis-bridge.mjs` — zero-dependency-except-`pg` **read-only** HTTP bridge (single SELECT/WITH statements only; stacked queries and write/DDL keywords rejected 403 before touching the pool; CORS; health/tables/query). **PostGIS Link panel** (Data tab): bridge endpoint (persisted), table listing via `geometry_columns`, per-layer import with disclosed reprojection. Bridge smoke-tested: write/stacked guards verified; error paths actionable. |
+| PROJ WASM | ⏭ deferred | proj4 + WKT ingest covers the practical datum set for the target market (120 UTM zones, Arc 1960, paste-EPSG, .prj). Full PROJ grid shifts (NTv2) and exotic datums arrive with the desktop shell (Tauri sidecar), where PROJ runs natively — a 10 MB+ WASM for marginal coverage is the wrong trade today. |
+| GDAL WASM | ⏭ deferred | The exchange formats that matter are now natively covered both ways — read: .shp/.dbf/.prj/.gpkg/GeoJSON; write: GeoPackage/DXF/LandXML/GeoJSON/SVG — with no 30 MB WASM. Revisit under the Tauri sidecar for the long tail (filegdb, coverage, raster IO). |
+
+**Verification:** 14/14 test suites pass (was 10; +composer, +gpkg-writer
+roundtrip, +crs-wkt, +ewkb), `tsc` clean, production build green, all 11
+benchmark budgets honoured. Manual QA (screenshots `phaseC-01..17`): composer
+Form 4 + Atlas templates live-edited and exported, both statutory tabs and
+Export Hub render through the template engine, real .gpkg downloaded from the
+browser and byte-verified, PostGIS panel connect/error paths, bridge
+read-only guards.
 
 ### Phase D — The divergence (months 4+)
 
