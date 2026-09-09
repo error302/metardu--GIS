@@ -127,10 +127,11 @@ The gaps, in order of severity:
 | Shapefile ingest | ✅ | Dependency-free `.shp` (types 1/3/5/8 + Z/M variants) and dBASE III `.dbf` reader with C/N/F/D/L field typing; GeoJSON reader; attribute-driven category/code inference. Multi-file Import in the toolbar. GeoPackage deferred to Phase B (WASM size vs. current need). |
 | Benchmark harness | ✅ | `npm run bench` — deterministic 10k/50k generators, hard budgets, CI-exitable. Measured at 50k: pipeline 1.30 s (was 101.7 s — 78×), MCDA warm re-eval 203 ms, hazard 106 ms, energy 6 ms, query p99 0.12 ms. All budgets green. |
 | Delaunay rebuild | ➕ (found by the harness) | The ad-hoc Bowyer-Watson was O(n²) and 99% of pipeline time. Replaced with `delaunator` sweep-hull (O(n)); bespoke face metrics/volumes kept. Contour stitching rewritten from O(S²) rescan to endpoint-hash chaining, plus elevation-band bucketing. |
-| turf.js | ⏭ deferred | Statutory corridor buffers need golden-file parity proof before an engine swap; the bench harness now provides the timing baseline to do it safely in Phase B. |
+| turf.js | ✅ closed (GEOS parity, no swap) | The deferred engine swap is resolved the stronger way: `scripts/golden_buffers.py` generates reference corridor polygons with **GEOS** (shapely — the engine behind QGIS/PostGIS) over 6 deterministic fixtures at 15 m/30 m widths, and `tests/buffer-parity.test.ts` proves the in-house engine matches (area within 0.5 %, boundary agreement within 0.10 m both ways, ring simplicity). turf.js itself was rejected on merits: cadastral corridors are planar grid-meter geometry, while turf buffers geodesically in degrees — the wrong model for projected CRS work. The parity exercise instead surfaced real v1 defects, fixed in `buffer-engine.ts` v2: per-segment offsets left wedge gaps or self-intersecting overlaps at every bend; v2 produces round joins (8 segments/quarter, GEOS `quad_segs=8`), inner miters, flat end caps, and a closed simple `polygon` ring rendered on canvas, exported to DXF (closed LWPOLYLINE) and GeoJSON (Polygon features, closing the gap where the GeoJSON header claimed buffer export but never shipped it). |
 
-**Verification:** 6/6 test suites pass (4 legacy + spatial-index parity + ingest
-roundtrip), `tsc` clean, production build green, manual QA: worker-mode pipeline,
+**Verification:** 7/7 test suites pass at Phase A scope (was 6; +buffer GEOS
+parity — 19 suites across the repo today), `tsc` clean,
+production build green, manual QA: worker-mode pipeline,
 undo/redo round-trip, real Shapefile pair import (4 beacons + road polyline),
 6k-point CSV ingest with LOD rendering.
 
