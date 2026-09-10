@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Header, ActiveTab } from "./components/Header";
 import { StatusBar, CursorReadout } from "./components/StatusBar";
 import { MapCanvas2D } from "./components/MapCanvas2D";
@@ -26,6 +26,8 @@ import { ProvenancePanel } from "./components/ProvenancePanel";
 import { TraversePanel } from "./components/TraversePanel";
 import { ScenarioComparePanel } from "./components/ScenarioComparePanel";
 import { SyncPanel } from "./components/SyncPanel";
+import { OsintPanel } from "./components/OsintPanel";
+import { OverpassBbox } from "./core/osint/overpass";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
@@ -305,6 +307,78 @@ export const App: React.FC = () => {
     }
   };
 
+  /**
+   * OSINT import — Overpass features arrive as WGS84 lon/lat vertices;
+   * reproject into the ACTIVE working CRS (not a hardcoded zone) so the
+   * context lands next to the surveyed geometry.
+   */
+  const handleOsintImport = async (points: SurveyPoint[], layerName: string, notes: string[]) => {
+    const targetEpsg = pipelineResult
+      ? crsEpsgFromMetadata(pipelineResult.metadata.crs)
+      : 21037;
+    const targetName = pipelineResult?.metadata.crs ?? "Arc 1960 / UTM zone 37S";
+    setIsLoading(true);
+    setProgress({ pct: 20, stage: "Reprojecting OSINT context" });
+    const warnings = [...notes];
+    try {
+      const pts = points.map((p) => {
+        const [e, n] = transform(4326, targetEpsg, p.easting, p.northing);
+        return { ...p, easting: Number(e.toFixed(4)), northing: Number(n.toFixed(4)) };
+      });
+      warnings.push(`Reprojected ${pts.length} vertices from WGS84 (EPSG:4326) to the working CRS.`);
+      const metadata = {
+        id: "OSINT-01",
+        title: layerName,
+        locality: "Open-source intelligence context",
+        country: "—",
+        crs: targetName,
+        surveyorName: "OSM via Overpass API (ODbL)",
+        registrationNo: "OSM-ODBL",
+        date: new Date().toISOString().split("T")[0],
+        scale: "1:1,000",
+        organization: "MetaRDU GIS Workstation",
+      };
+      await executePipeline(
+        { ...(selectedScenario as BenchmarkScenario), metadata, points: [] },
+        pts,
+        "reset",
+        `OSINT import: ${layerName}`,
+      );
+      if (warnings.length > 0) {
+        alert(`OSINT import notes:\n\n${warnings.join("\n")}`);
+      }
+    } finally {
+      setIsLoading(false);
+      setProgress(null);
+    }
+  };
+
+  /**
+   * Document extent in WGS84 lon/lat — the OSINT query scope. Computed from
+   * the point cloud bounds (padded 10%), corner-reprojected into EPSG:4326.
+   */
+  const wgs84Bbox = useMemo<OverpassBbox | null>(() => {
+    if (!pipelineResult || pipelineResult.points.length === 0) return null;
+    const epsg = crsEpsgFromMetadata(pipelineResult.metadata.crs);
+    let minE = Infinity, minN = Infinity, maxE = -Infinity, maxN = -Infinity;
+    for (const p of pipelineResult.points) {
+      if (p.easting < minE) minE = p.easting;
+      if (p.easting > maxE) maxE = p.easting;
+      if (p.northing < minN) minN = p.northing;
+      if (p.northing > maxN) maxN = p.northing;
+    }
+    const dE = (maxE - minE) * 0.1 || 10; // degenerate extents still get context
+    const dN = (maxN - minN) * 0.1 || 10;
+    const sw = transform(epsg, 4326, minE - dE, minN - dN);
+    const ne = transform(epsg, 4326, maxE + dE, maxN + dN);
+    return {
+      lonMin: Math.min(sw[0], ne[0]),
+      latMin: Math.min(sw[1], ne[1]),
+      lonMax: Math.max(sw[0], ne[0]),
+      latMax: Math.max(sw[1], ne[1]),
+    };
+  }, [pipelineResult]);
+
   const handleCursorReadout = useCallback((c: CursorReadout | null) => setCursor(c), []);
   const handleScaleChange = useCallback((s: number) => setScaleDenominator(s), []);
 
@@ -406,6 +480,9 @@ export const App: React.FC = () => {
         {activeTab === "composer" && <ComposerPanel result={pipelineResult} />}
         {activeTab === "postgis" && (
           <PostgisPanel onImportPoints={handlePostgisImport} />
+        )}
+        {activeTab === "osint" && (
+          <OsintPanel wgs84Bbox={wgs84Bbox} onImportPoints={handleOsintImport} />
         )}
         {activeTab === "provenance" && <ProvenancePanel result={pipelineResult} />}
         {activeTab === "traverse" && (

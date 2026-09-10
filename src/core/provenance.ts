@@ -16,6 +16,7 @@
 import { PipelineResult } from "../types/spatial";
 import { getGeoidProvenance } from "./crs";
 import { getMethodology } from "./methodology-registry";
+import { getExternalSources, ExternalSourceRecord } from "./osint/registry";
 
 export type ProvenanceNodeKind = "source" | "process" | "figure";
 
@@ -101,7 +102,10 @@ const fmt = (n: number, d = 2) =>
 /* Graph builder                                                       */
 /* ------------------------------------------------------------------ */
 
-export function buildProvenanceGraph(result: PipelineResult): ProvenanceGraph {
+export function buildProvenanceGraph(
+  result: PipelineResult,
+  externalSources: ExternalSourceRecord[] = getExternalSources(),
+): ProvenanceGraph {
   const nodes: ProvenanceNode[] = [];
   const push = (n: ProvenanceNode) => nodes.push(n);
 
@@ -120,6 +124,18 @@ export function buildProvenanceGraph(result: PipelineResult): ProvenanceGraph {
           )} m)`
         : "; instrument accuracy not stated in source"
     }`,
+  });
+
+  // OSINT chain of custody — every external fetch recorded this session.
+  externalSources.forEach((s, i) => {
+    push({
+      id: `src:external-${i + 1}`,
+      kind: "source",
+      label: s.service,
+      origin: `${s.attribution} — fetched ${s.fetchedAt} from ${s.endpoint}; ${s.featureCount.toLocaleString(
+        "en-US",
+      )} features ingested${s.note ? `; scope: ${s.note}` : ""}; license ${s.license}. Indicative context, NOT survey-grade.`,
+    });
   });
 
   const geoid = getGeoidProvenance();

@@ -10,6 +10,7 @@
  */
 
 import { buildProvenanceGraph, provenanceDigest, provenanceRows, ProvenanceGraph } from "../src/core/provenance";
+import { recordExternalSource, getExternalSources, clearExternalSources } from "../src/core/osint/registry";
 import { createProjectSnapshot, parseProjectFile } from "../src/core/project";
 import { exportToGeoJson } from "../src/exporters/geojson-exporter";
 import { exportToLandXml } from "../src/exporters/landxml-exporter";
@@ -162,6 +163,50 @@ check(xml.trimEnd().endsWith("-->") && !/<!--[^]*--[^>]*--[^>]*-->/.test(xml.sli
 const empty = buildProvenanceGraph({ ...result, boundary: null, suitability: [], energyClusters: [], telemetries: [], points: [] });
 check(empty.nodes.filter((n) => n.kind === "figure").every((n) => (n.value ?? "") !== ""), "empty document still yields well-formed figures");
 check(/^[0-9a-f]{8}$/.test(empty.digest), "empty document digest valid");
+
+/* ---------------- 7. OSINT external sources (chain of custody) ---------------- */
+
+const baseGraph = buildProvenanceGraph(result, []);
+
+const osmSource = {
+  service: "OpenStreetMap (Overpass API)",
+  endpoint: "https://overpass-api.de/api/interpreter",
+  license: "ODbL 1.0",
+  attribution: "© OpenStreetMap contributors",
+  fetchedAt: "2026-09-10T08:00:00.000Z",
+  featureCount: 1234,
+  note: "buildings, roads — bbox [-1.35, 36.9, -1.25, 37.0] ≈ 9.9 × 11.1 km",
+};
+const withSrc = buildProvenanceGraph(result, [osmSource]);
+const ext = withSrc.nodes.find((n) => n.id === "src:external-1");
+check(!!ext && ext.kind === "source" && ext.label === "OpenStreetMap (Overpass API)", "external fetch lands as a source node");
+check(
+  !!ext && ext.origin!.includes("ODbL 1.0") && ext.origin!.includes("1,234 features") && ext.origin!.includes("NOT survey-grade"),
+  "external node discloses license, feature count and the indicative warning",
+);
+check(withSrc.nodes.length === baseGraph.nodes.length + 1, "external sources append without disturbing base nodes");
+check(provenanceDigest(withSrc.nodes) !== provenanceDigest(baseGraph.nodes), "consulting an external source changes the digest");
+check(
+  provenanceDigest(withSrc.nodes) === provenanceDigest(buildProvenanceGraph(result, [{ ...osmSource }]).nodes),
+  "same sources → same digest (deterministic chain of custody)",
+);
+check(
+  withSrc.nodes
+    .filter((n) => n.kind === "figure")
+    .every((f) => (f.inputs ?? []).every((id) => withSrc.nodes.some((n) => n.id === id))),
+  "referential integrity holds with external nodes present",
+);
+
+// Default parameter reads the session registry
+clearExternalSources();
+check(getExternalSources().length === 0, "registry starts the session empty");
+recordExternalSource(osmSource);
+check(
+  buildProvenanceGraph(result).nodes.some((n) => n.id === "src:external-1"),
+  "default builder consumes the session registry",
+);
+check(getExternalSources()[0].featureCount === 1234, "registry record roundtrips");
+clearExternalSources();
 
 console.log(failures === 0 ? "ALL PROVENANCE TESTS PASSED" : `${failures} PROVENANCE TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

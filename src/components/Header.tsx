@@ -21,6 +21,7 @@ import {
   Crosshair,
   GitCompare,
   Users,
+  Satellite,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
 import { CrsPicker } from "./CrsPicker";
@@ -37,6 +38,7 @@ export type ActiveTab =
   | "composer"
   | "datagrid"
   | "postgis"
+  | "osint"
   | "provenance"
   | "traverse"
   | "scenarios"
@@ -95,6 +97,7 @@ const NAV_GROUPS: { label: string; items: { id: ActiveTab; label: string; icon: 
     items: [
       { id: "datagrid", label: "Attribute Table", icon: Table2 },
       { id: "postgis", label: "PostGIS Link", icon: Database },
+      { id: "osint", label: "OSINT Sources", icon: Satellite },
       { id: "provenance", label: "Provenance", icon: Fingerprint },
       { id: "sync", label: "Edge Sync", icon: Users },
     ],
