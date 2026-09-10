@@ -79,12 +79,54 @@ MetaRDU GIS Studio is a high-performance, offline-capable geospatial workstation
   * MCDA suitability weights
 * 1-Click "Save Project" and "Open Project" from the application header.
 
+### 8. Interactive On-Canvas Vector Digitizing & Cadastral COGO
+* **On-Canvas Beacon Drop Tool**: Direct interactive point creation with automatic MSL elevation interpolation from terrain TIN / contours and auto-incrementing beacon IDs (`BK1`, `BK2`...).
+* **Real-time Snapping Aperture Engine**: Magnetic snapping to both vertices and segment edges within a configurable screen-space tolerance (14px). Visual cyan snapping ring with crosshair and element type indicator.
+* **COGO Metes & Bounds Traversal Ribbon**: Draft statutory boundary legs directly on the canvas by entering Bearing ($DD^\circ MM' SS"$) and Distance ($m$) with live rubber-band preview and inverse metric callouts.
+* **Vertex Editor & Reshaping**: Interactive vertex drag-and-drop with real-time snapping to adjacent geometry and topological coordinates.
+* **Command History & Undo/Redo Engine**: Memento pattern implementation with full undo/redo stack (`Ctrl+Z`, `Ctrl+Y`) and UI toolbar buttons.
+
+### 9. Visual Print Layout Composer (QGIS Print Layout Parity)
+* **Interactive Cartographic Sheet Designer**: Dedicated layout composition workspace supporting ISO standard page formats:
+  * **A4 Landscape & Portrait** ($297 \times 210$ mm)
+  * **A3 Landscape & Portrait** ($420 \times 297$ mm)
+  * **A1 Engineering Sheet** ($841 \times 594$ mm)
+* **Standard Engineering Scales**: 1:250, 1:500, 1:1,000, 1:1,250, 1:2,000, 1:2,500, 1:5,000, 1:10,000, plus automated "Auto-Fit" scale calculator.
+* **Draggable & Configurable Layout Frames**:
+  * Scaled Map Frame with metric coordinate border neatlines and graticule ticks (+)
+  * Dynamic Layer Legend reflecting active symbology
+  * Segmented Graphical Metric Scale Bar
+  * Multi-blade Nautical North Arrow
+  * Official Surveyor & Municipal Title Block with customizable registration credentials
+  * Auto-populated Beacon Coordinate Schedule Table (ID, Easting, Northing, Orthometric Height)
+* **High-Resolution Multi-Format Exporters**:
+  * 1-Click Export to **Print-Ready Vector SVG**
+  * **300 DPI High-Resolution PNG** rasterization for physical printing
+  * Direct browser **Print-to-PDF** with CSS `@page` layout styling
+
+### 10. Multi-Source Satellite & Remote Sensing Tile Streamer
+* **Real Slippy Map Tile Renderer**: Client-side Web Mercator ($EPSG:3857$) tile streaming engine with on-the-fly geodetic reprojection and sub-pixel canvas blitting.
+* **Supported Tile Providers**:
+  * **ESRI World Imagery**: High-resolution true-color satellite aerial photography.
+  * **OpenStreetMap Standard**: Regional street and infrastructure cartography.
+  * **NASA GIBS Night-Time Lights (VIIRS Black Marble)**: Nocturnal satellite radiance data identifying un-electrified rural gaps.
+  * **CartoDB Dark Matter**: Dark-slate cyber-cartographic vector base.
+* **Tile Cache & Offline Resilience**: In-memory LRU tile cache with asynchronous image loading and smooth viewport panning.
+
+### 11. Advanced Spatial Analysis & Geoprocessing Extensions
+* Expanded processing toolbox with 11 production GIS algorithms:
+  * **Thiessen / Voronoi Polygons**: Optimal service area catchment boundaries around facilities using half-plane clipping.
+  * **Spatial Join (Point-in-Polygon Aggregation)**: Aggregates settlement points into cadastral parcels, computing point count, average elevation, and total daily electricity demand.
+  * **Convex Hull Generator**: Minimal enclosing bounding polygon in $O(N \log N)$ time using Andrew's Monotone Chain algorithm.
+  * **Cadastral Equal-Area Subdivision**: Splits a boundary parcel into $N$ equal-area sub-plots along the primary survey axis.
+
 ---
 
 ## 1-Click Statutory Deliverables Export
 
 * **Official Form 4 Statutory Deed Plan (Mutation Sheet)**: Formatted with official survey border, title block, coordinate graticule grid, true north arrow, metric scale bar, and Beacon Coordinate Schedule Table.
 * **Regional Planning Atlas**: Pre-composed decision dossier with executive KPI cards, suitability choropleth, hazard vulnerability matrix, and municipal approval blocks.
+* **Print Layout Composer Deliverables**: Vector SVG, 300 DPI PNG, and print-ready PDF sheets.
 * **AutoCAD DXF R2018**: Layered CAD drawing (`BOUNDARIES`, `CONTOURS`, `BEACONS`, `BUFFERS`).
 * **Standards-Compliant GeoJSON**: RFC 7946 with CRS header and dynamic attribute properties.
 * **LandXML 1.2 Digital Cadastre**: National land portal digital lodgement schema.
@@ -94,23 +136,23 @@ MetaRDU GIS Studio is a high-performance, offline-capable geospatial workstation
 
 ## Test Suite & Verification
 
-The workstation includes automated unit tests verifying geodetic accuracy, parser robustness, and mathematical precision:
+The workstation includes 7 automated test suites verifying geodetic accuracy, parser robustness, mathematical precision, and spatial algorithms:
 
 ```bash
-# Run all test suites
-npx tsx tests/crs.test.ts
-npx tsx tests/parser-calculator.test.ts
-npx tsx tests/cogo-traverse.test.ts
-npx tsx tests/project.test.ts
+# Run all 7 test suites
+npm test
 
 # Production build
 npm run build
 ```
 
-* `tests/crs.test.ts`: Round-trip geodetic datum transforms verified to $< 1$ mm precision.
-* `tests/parser-calculator.test.ts`: CSV attribute retention, expression evaluation, and roundtrip serialization verified.
-* `tests/cogo-traverse.test.ts`: COGO forward/inverse, ray intersections, Bowditch adjustment, and topology snapping verified.
-* `tests/project.test.ts`: Complete `.metardu.json` project snapshot and restore verified.
+1. `tests/crs.test.ts`: Round-trip geodetic datum transforms verified to $< 1$ mm precision.
+2. `tests/parser-calculator.test.ts`: CSV attribute retention, expression evaluation, and roundtrip serialization verified.
+3. `tests/cogo-traverse.test.ts`: COGO forward/inverse, ray intersections, Bowditch adjustment, and topology snapping verified.
+4. `tests/project.test.ts`: Complete `.metardu.json` project snapshot and restore verified.
+5. `tests/digitizing-cogo.test.ts`: Memento pattern undo/redo, point-to-segment distance, vertex & edge snapping, and COGO radiation verified.
+6. `tests/tile-math.test.ts`: Web Mercator tile index conversions, bounding boxes, and dynamic zoom calculation verified.
+7. `tests/geoprocessing-advanced.test.ts`: Shoelace area, Jordan ray-casting, convex hull, spatial join aggregation, Voronoi partitions, and equal-area subdivision verified.
 
 ---
 

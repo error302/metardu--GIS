@@ -70,12 +70,45 @@ All 8 planned development phases towards QGIS / ArcGIS Pro functional parity hav
 - [x] Build interactive controls in `src/components/EnergyPlanningPanel.tsx` with 6 dynamic sliders, 3 tiered presets (Basic, Standard, Productive), and live cluster recalculation
 - **Status:** complete
 
+### Phase 9: Interactive On-Canvas Vector Digitizing & Advanced Cadastral COGO
+- [x] Build Command History & Undo/Redo Engine (`src/core/history.ts`) with Memento pattern (`push`, `undo`, `redo`, `canUndo`, `canRedo`)
+- [x] Build Digitizing & Snapping Engine (`src/core/digitizing.ts`) with `findNearestSnapTarget` (vertex & segment edge snapping), `interpolateElevation`, `calculateCogoLeg`, `getNextPointId`
+- [x] Integrate Digitizing Toolbar into `src/components/MapCanvas2D.tsx` (Navigate, Drop Beacon, COGO Traverse, Vertex Edit, Undo, Redo with `Ctrl+Z` / `Ctrl+Y`)
+- [x] Add real-time snapping aperture halo ring with crosshairs and dynamic drafting rubber-band line
+- [x] Add floating COGO Metes-and-Bounds traversal ribbon (Anchor selection, Bearing DMS, Distance m, Add Leg)
+- [x] Unit test: History stack, point-to-segment distance, snapping, and COGO radiation verified in `tests/digitizing-cogo.test.ts`
+- **Status:** complete
+
+### Phase 10: Visual Print Layout Composer (QGIS Print Layout Parity)
+- [x] Build Print Layout Engine (`src/core/layout-engine.ts`) supporting ISO A4, A3, A1 sheets in Landscape & Portrait with standard engineering scales (1:250 to 1:10,000)
+- [x] Generate publication-quality vector SVG with neatline borders, coordinate graticules (+), boundary callouts, index contours, buffers, beacons, dynamic scalebar, compass north arrow, surveyor title block, and beacon coordinate schedule
+- [x] Build `src/components/PrintLayoutComposer.tsx` with interactive canvas preview, sheet format switcher, auto-fit scale, element toggles, title block editor, 300 DPI PNG exporter, and Print-to-PDF stylesheet
+- [x] Wire `"layout"` tab into `Header.tsx` and `App.tsx`
+- **Status:** complete
+
+### Phase 11: Real Multi-Source Satellite & Remote Sensing Tile Streamer
+- [x] Build Slippy Map Tile Engine (`src/core/tile-engine.ts`) with EPSG to WGS84 to Web Mercator tile index converters (`lonLatToTileXY`, `tileXYToLonLatBounds`, `calculateTileZoom`)
+- [x] Register 4 tile providers: ESRI World Imagery (Satellite), OpenStreetMap, NASA GIBS Night-Time Lights (VIIRS Black Marble), and CartoDB Dark Matter
+- [x] Build in-memory Tile Cache (`TileManager`) with asynchronous image loading and LRU cache eviction
+- [x] Integrate tile blitter into `MapCanvas2D.tsx` render loop with sub-pixel alignment under vector layers
+- [x] Unit test: Tile coordinate math, bounding boxes, and zoom calculations verified in `tests/tile-math.test.ts`
+- **Status:** complete
+
+### Phase 12: Advanced Spatial Analysis & Geoprocessing Extensions
+- [x] Implement core spatial algorithms in `src/core/spatial-analysis.ts`: Shoelace area, Jordan ray-casting point-in-polygon, Andrew's Monotone Chain Convex Hull, Spatial Join (Point-in-Polygon Aggregation), Thiessen / Voronoi Polygons (half-plane clipping), and Equal-Area Cadastral Subdivision
+- [x] Register 4 new enterprise tools in `src/core/toolbox/registry.ts`: Thiessen (Voronoi) Polygons, Spatial Join (Point-in-Polygon), Convex Hull Generator, Cadastral Equal-Area Subdivision (totaling 11 geoprocessing algorithms)
+- [x] Unit test: Convex hull, spatial join aggregation, Voronoi cells, and equal-area subdivision verified in `tests/geoprocessing-advanced.test.ts`
+- **Status:** complete
+
 ---
 
 ## Verification & Test Results
-All test suites passing with 100% success rate:
+All 7 test suites passing with 100% success rate:
 1. `tests/crs.test.ts`: Geodetic datum transforms & geoid reduction (< 1mm precision)
 2. `tests/parser-calculator.test.ts`: Attribute retention, Field Calculator expressions, GeoJSON/CSV roundtrip
 3. `tests/cogo-traverse.test.ts`: COGO forward/inverse, ray intersections, Bowditch adjustment, topology repair
 4. `tests/project.test.ts`: `.metardu.json` project persistence and complete state restoration
-5. Production Build: `tsc && vite build` succeeds with 0 errors in under 5 seconds.
+5. `tests/digitizing-cogo.test.ts`: Undo/redo history, snapping detection, COGO radiation
+6. `tests/tile-math.test.ts`: Web Mercator tile conversion, bounding boxes, dynamic zoom
+7. `tests/geoprocessing-advanced.test.ts`: Shoelace area, Convex hull, Spatial join, Voronoi partitions, Equal-area subdivision
+8. Production Build: `tsc && vite build` succeeds with 0 errors in under 8 seconds.

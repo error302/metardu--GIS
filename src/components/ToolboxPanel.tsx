@@ -15,6 +15,8 @@ import {
   Compass,
   X,
   Sparkles,
+  Maximize2,
+  Scissors,
 } from "lucide-react";
 import {
   TOOLBOX_REGISTRY,
@@ -96,6 +98,9 @@ export const ToolboxPanel: React.FC<ToolboxPanelProps> = ({
       case "Zap": return <Zap className="w-4 h-4 text-yellow-400" />;
       case "CheckCircle": return <CheckCircle className="w-4 h-4 text-teal-400" />;
       case "Compass": return <Compass className="w-4 h-4 text-rose-400" />;
+      case "Maximize2": return <Maximize2 className="w-4 h-4 text-cyan-400" />;
+      case "Layers": return <Layers className="w-4 h-4 text-purple-400" />;
+      case "Scissors": return <Scissors className="w-4 h-4 text-amber-400" />;
       default: return <Wrench className="w-4 h-4 text-slate-400" />;
     }
   };

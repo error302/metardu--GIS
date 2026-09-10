@@ -31,7 +31,7 @@ export interface CogoForwardResult {
  * Parse DMS string (e.g. "124°30'15\"", "124 30 15", "124-30-15") into decimal degrees
  */
 export function dmsToDecimal(dmsStr: string): number {
-  const clean = dmsStr.trim().replace(/[°'"NSEWnsew]/g, " ").replace(/\s+/g, " ");
+  const clean = dmsStr.trim().replace(/[°'"NSEWnsew\-]/g, " ").replace(/\s+/g, " ");
   const parts = clean.split(" ").map(parseFloat).filter((n) => !isNaN(n));
   if (parts.length === 0) return 0;
   const d = parts[0] || 0;

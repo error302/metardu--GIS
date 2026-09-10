@@ -14,6 +14,7 @@ import {
   Globe,
   Save,
   FolderOpen,
+  Printer,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
 import { listSupportedEPSG, crsEpsgFromMetadata } from "../core/crs";
@@ -26,6 +27,7 @@ export type ActiveTab =
   | "energy"
   | "deedplan"
   | "atlas"
+  | "layout"
   | "datagrid";
 
 interface HeaderProps {
@@ -261,6 +263,18 @@ export const Header: React.FC<HeaderProps> = ({
         >
           <FileText className="w-3.5 h-3.5" />
           <span>Regional Planning Atlas</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("layout")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition cursor-pointer ${
+            activeTab === "layout"
+              ? "bg-blue-600/20 text-blue-400 border border-blue-500/30 font-semibold"
+              : "text-slate-400 hover:text-white hover:bg-slate-800/50"
+          }`}
+        >
+          <Printer className="w-3.5 h-3.5" />
+          <span>Print Layout Composer</span>
         </button>
 
         <button

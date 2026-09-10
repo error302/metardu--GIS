@@ -8,6 +8,7 @@ import { HazardAuditPanel } from "./components/HazardAuditPanel";
 import { EnergyPlanningPanel } from "./components/EnergyPlanningPanel";
 import { DeedPlanViewer } from "./components/DeedPlanViewer";
 import { PlanningAtlasViewer } from "./components/PlanningAtlasViewer";
+import { PrintLayoutComposer } from "./components/PrintLayoutComposer";
 import { AttributeTable } from "./components/AttributeTable";
 import { ExportHubModal } from "./components/ExportHubModal";
 import { BENCHMARK_SCENARIOS, BenchmarkScenario } from "./data/sample-surveys";
@@ -172,6 +173,7 @@ export const App: React.FC = () => {
                 prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
               );
             }}
+            onUpdatePoints={(pts) => executePipeline(selectedScenario, pts)}
           />
         )}
         {activeTab === "terrain3d" && <TerrainViewer3D result={pipelineResult} />}
@@ -194,6 +196,7 @@ export const App: React.FC = () => {
         )}
         {activeTab === "deedplan" && <DeedPlanViewer result={pipelineResult} />}
         {activeTab === "atlas" && <PlanningAtlasViewer result={pipelineResult} />}
+        {activeTab === "layout" && <PrintLayoutComposer result={pipelineResult} />}
         {activeTab === "datagrid" && (
           <AttributeTable
             result={pipelineResult}

@@ -4,31 +4,50 @@ import {
   ZoomOut,
   Maximize2,
   Layers,
-  Eye,
-  EyeOff,
-  Compass,
-  Sun,
-  Moon,
-  Globe,
   Wrench,
+  MousePointer,
+  MapPin,
+  Move,
+  Undo2,
+  Redo2,
+  Compass,
+  Check,
 } from "lucide-react";
-import { PipelineResult } from "../types/spatial";
+import { SurveyPoint, PipelineResult } from "../types/spatial";
 import { crsEpsgFromMetadata, toWGS84 } from "../core/crs";
 import { DEFAULT_LAYERS, LayerItem } from "../core/layer-store";
 import { LayerPanel } from "./LayerPanel";
 import { ToolboxPanel } from "./ToolboxPanel";
+import { HistoryManager } from "../core/history";
+import {
+  findNearestSnapTarget,
+  interpolateElevation,
+  calculateCogoLeg,
+  getNextPointId,
+  SnapResult,
+} from "../core/digitizing";
+import {
+  TILE_PROVIDERS,
+  globalTileManager,
+  calculateTileZoom,
+} from "../core/tile-engine";
+import { cogoInverse } from "../core/cogo";
 
 interface MapCanvas2DProps {
   result: PipelineResult;
   selectedPointIds?: string[];
   onSelectPoint?: (id: string) => void;
+  onUpdatePoints?: (points: SurveyPoint[]) => void;
 }
 
-export type BasemapMode = "dark" | "satellite" | "viirs" | "cad";
+export type BasemapMode = "dark" | "satellite" | "osm" | "viirs" | "cad";
+export type DigitizingMode = "navigate" | "drop_point" | "cogo_traverse" | "vertex_edit";
 
 export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   result,
   selectedPointIds = [],
+  onSelectPoint,
+  onUpdatePoints,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -38,6 +57,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [cursorCoord, setCursorCoord] = useState({ easting: 0, northing: 0, elevation: 0 });
+  const [renderTrigger, setRenderTrigger] = useState(0);
 
   const activeEpsg = useMemo(() => crsEpsgFromMetadata(result.metadata.crs), [result.metadata.crs]);
 
@@ -53,6 +73,65 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   // Basemap & Layer toggles
   const [basemap, setBasemap] = useState<BasemapMode>("dark");
   const [layerItems, setLayerItems] = useState<LayerItem[]>(DEFAULT_LAYERS);
+
+  // Digitizing & Editing Modes
+  const [digitizingMode, setDigitizingMode] = useState<DigitizingMode>("navigate");
+  const [cogoAnchorId, setCogoAnchorId] = useState<string>("");
+  const [cogoBearing, setCogoBearing] = useState<string>("45-00-00");
+  const [cogoDistance, setCogoDistance] = useState<number>(50.0);
+  const [draggingPointId, setDraggingPointId] = useState<string | null>(null);
+
+  // Snapping State
+  const [snapTarget, setSnapTarget] = useState<SnapResult>({
+    snapped: false,
+    x: 0,
+    y: 0,
+    elevation: 1680,
+    type: "none",
+    distanceWorld: Infinity,
+  });
+
+  // History & Undo/Redo Engine
+  const historyManager = useRef(new HistoryManager<SurveyPoint[]>(50));
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  const updateHistoryCapabilities = () => {
+    setCanUndo(historyManager.current.canUndo());
+    setCanRedo(historyManager.current.canRedo());
+  };
+
+  const handleUndo = () => {
+    const res = historyManager.current.undo(result.points);
+    if (res) {
+      updateHistoryCapabilities();
+      onUpdatePoints?.(res.state);
+    }
+  };
+
+  const handleRedo = () => {
+    const res = historyManager.current.redo(result.points);
+    if (res) {
+      updateHistoryCapabilities();
+      onUpdatePoints?.(res.state);
+    }
+  };
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) handleRedo();
+        else handleUndo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "y") {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [result.points]);
 
   const layerMap = useMemo(() => {
     const map: Record<string, LayerItem> = {};
@@ -133,7 +212,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Handle high DPI
+    // High DPI scaling
     const rect = canvas.getBoundingClientRect();
     canvas.width = rect.width * window.devicePixelRatio;
     canvas.height = rect.height * window.devicePixelRatio;
@@ -141,40 +220,65 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     const w = rect.width;
     const h = rect.height;
 
-    // 1. Draw Basemap Background
+    // Viewport extents in world coordinates
+    const minVisE = toWorldE(0);
+    const maxVisE = toWorldE(w);
+    const minVisN = toWorldN(h);
+    const maxVisN = toWorldN(0);
+
+    // 1. Draw Basemap Background & Real Slippy Tiles
     if (basemap === "dark") {
       ctx.fillStyle = "#0B0F17";
       ctx.fillRect(0, 0, w, h);
     } else if (basemap === "cad") {
       ctx.fillStyle = "#F8FAFC";
       ctx.fillRect(0, 0, w, h);
-    } else if (basemap === "satellite") {
-      // Simulated satellite aerial tone
-      ctx.fillStyle = "#111827";
+    } else {
+      ctx.fillStyle = "#0B0F17";
       ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = "#064E3B22";
-      ctx.fillRect(0, 0, w, h);
-    } else if (basemap === "viirs") {
-      // Night Lights Overlay (VIIRS-inspired, generic ref — see methodology-registry)
-      ctx.fillStyle = "#030712";
-      ctx.fillRect(0, 0, w, h);
-      // Soft ambient light glow
-      const grad = ctx.createRadialGradient(w / 2, h / 2, 20, w / 2, h / 2, w / 1.5);
-      grad.addColorStop(0, "#F59E0B15");
-      grad.addColorStop(1, "#00000000");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, w, h);
+
+      // Real Multi-Source Tile Streamer (ESRI / OSM / NASA VIIRS)
+      const provider =
+        basemap === "satellite"
+          ? TILE_PROVIDERS["esri-satellite"]
+          : basemap === "osm"
+          ? TILE_PROVIDERS["osm"]
+          : basemap === "viirs"
+          ? TILE_PROVIDERS["nasa-viirs"]
+          : null;
+
+      if (provider) {
+        const centerLat = cursorLat || -1.29;
+        const tileZ = calculateTileZoom(zoom, centerLat, provider.minZoom, provider.maxZoom);
+        const tiles = globalTileManager.getVisibleTiles(
+          minVisE,
+          maxVisE,
+          minVisN,
+          maxVisN,
+          activeEpsg,
+          tileZ,
+          provider
+        );
+
+        for (const t of tiles) {
+          const img = globalTileManager.requestTile(provider, t.z, t.x, t.y, () => {
+            setRenderTrigger((n) => n + 1);
+          });
+          if (img && img.complete && img.naturalWidth > 0) {
+            const sx = toScreenX(t.boundsProj.minE);
+            const sy = toScreenY(t.boundsProj.maxN);
+            const sw = toScreenX(t.boundsProj.maxE) - sx;
+            const sh = toScreenY(t.boundsProj.minN) - sy;
+            ctx.drawImage(img, sx, sy, sw, sh);
+          }
+        }
+      }
     }
 
     // 2. Coordinate Graticule Grid (+)
     const graticuleStep = Math.max(20, Math.pow(10, Math.floor(Math.log10(200 / zoom))));
-    const minVisE = toWorldE(0);
-    const maxVisE = toWorldE(w);
-    const minVisN = toWorldN(h);
-    const maxVisN = toWorldN(0);
-
     ctx.lineWidth = 0.5;
-    ctx.strokeStyle = basemap === "cad" ? "#E2E8F0" : "#1E293B";
+    ctx.strokeStyle = basemap === "cad" ? "#E2E8F0" : "#1E293B88";
     ctx.fillStyle = basemap === "cad" ? "#64748B" : "#475569";
     ctx.font = "9px monospace";
 
@@ -280,7 +384,6 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
         });
         ctx.stroke();
 
-        // Major contour elevation labels
         if (c.isMajor && c.points.length > 5) {
           const midPt = c.points[Math.floor(c.points.length / 2)];
           const lx = toScreenX(midPt[0]);
@@ -294,7 +397,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
 
     // 7. Feature Vectors (Roads, Rivers, Buildings)
     for (const vec of result.vectors) {
-      if (vec.category === "boundary") continue; // drawn separately
+      if (vec.category === "boundary") continue;
       if (vec.category === "road" && !layers.roads) continue;
       if (vec.category === "water" && !layers.rivers) continue;
 
@@ -385,7 +488,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    // 10. Electrification Clusters (generic)
+    // 10. Electrification Clusters
     if (layers.energy) {
       for (const ec of result.energyClusters) {
         const sx = toScreenX(ec.centroid[0]);
@@ -415,12 +518,14 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
         const sy = toScreenY(pt.northing);
 
         const isSelected = selectedPointIds?.includes(pt.id);
-        if (isSelected) {
+        const isDraggingThis = draggingPointId === pt.id;
+
+        if (isSelected || isDraggingThis) {
           ctx.beginPath();
-          ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
-          ctx.fillStyle = "#FACC1533";
+          ctx.arc(sx, sy, isDraggingThis ? 10 : 8, 0, 2 * Math.PI);
+          ctx.fillStyle = isDraggingThis ? "#06B6D444" : "#FACC1533";
           ctx.fill();
-          ctx.strokeStyle = "#FACC15";
+          ctx.strokeStyle = isDraggingThis ? "#06B6D4" : "#FACC15";
           ctx.lineWidth = 2;
           ctx.stroke();
         }
@@ -441,8 +546,72 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    // 12. Cartographic HUD Elements (Scale Bar & North Arrow)
-    // North Arrow
+    // 12. Drafting Guides (Snapping Halo & COGO Rubber-Band)
+    if (snapTarget.snapped && digitizingMode !== "navigate") {
+      const sx = toScreenX(snapTarget.x);
+      const sy = toScreenY(snapTarget.y);
+      ctx.save();
+      ctx.strokeStyle = "#06B6D4";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 9, 0, 2 * Math.PI);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(sx - 13, sy);
+      ctx.lineTo(sx + 13, sy);
+      ctx.moveTo(sx, sy - 13);
+      ctx.lineTo(sx, sy + 13);
+      ctx.stroke();
+
+      ctx.fillStyle = "#06B6D4";
+      ctx.font = "bold 9px monospace";
+      ctx.fillText(`SNAP ${snapTarget.type.toUpperCase()}`, sx + 12, sy - 8);
+      ctx.restore();
+    }
+
+    // COGO Rubber-Band Line
+    if (digitizingMode === "cogo_traverse") {
+      const anchorPt = result.points.find((p) => p.id === cogoAnchorId) || result.points[0];
+      if (anchorPt) {
+        const ax = toScreenX(anchorPt.easting);
+        const ay = toScreenY(anchorPt.northing);
+        const targetE = snapTarget.snapped ? snapTarget.x : cursorCoord.easting;
+        const targetN = snapTarget.snapped ? snapTarget.y : cursorCoord.northing;
+        const cx = toScreenX(targetE);
+        const cy = toScreenY(targetN);
+
+        ctx.save();
+        ctx.strokeStyle = "#F59E0B";
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(cx, cy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        const inv = cogoInverse(anchorPt, { easting: targetE, northing: targetN });
+        const mx = (ax + cx) / 2;
+        const my = (ay + cy) / 2;
+
+        ctx.fillStyle = "#0F172AEE";
+        ctx.strokeStyle = "#F59E0B";
+        ctx.lineWidth = 0.5;
+        ctx.fillRect(mx - 40, my - 13, 80, 22);
+        ctx.strokeRect(mx - 40, my - 13, 80, 22);
+
+        ctx.fillStyle = "#F8FAFC";
+        ctx.font = "8px monospace";
+        ctx.textAlign = "center";
+        ctx.fillText(inv.bearingDms, mx, my - 2);
+        ctx.fillStyle = "#F59E0B";
+        ctx.fillText(`${inv.distanceM.toFixed(1)}m`, mx, my + 8);
+        ctx.restore();
+      }
+    }
+
+    // 13. Cartographic HUD Elements (Scale Bar & North Arrow)
     ctx.save();
     ctx.translate(w - 40, 45);
     ctx.fillStyle = basemap === "cad" ? "#FFFFFFEE" : "#0F172AEE";
@@ -495,10 +664,56 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       ctx.fillText(`${scaleBarWorldM / 2}m`, 25 + scaleBarPx / 2 - 8, h - 25);
       ctx.fillText(`${scaleBarWorldM}m`, 25 + scaleBarPx - 12, h - 25);
     }
-  }, [zoom, pan, basemap, layers, result]);
+  }, [zoom, pan, basemap, layers, result, snapTarget, digitizingMode, cogoAnchorId, draggingPointId, renderTrigger]);
 
   // Mouse interaction handlers
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const worldE = toWorldE(mx);
+    const worldN = toWorldN(my);
+
+    // 1. Drop Beacon Mode
+    if (digitizingMode === "drop_point") {
+      const snap = findNearestSnapTarget(worldE, worldN, result.points, result.vectors, 14 / zoom);
+      const targetE = snap.snapped ? snap.x : worldE;
+      const targetN = snap.snapped ? snap.y : worldN;
+      const nextId = getNextPointId(result.points, "BK");
+      const elev = interpolateElevation(targetE, targetN, result.points, result.tin || undefined);
+
+      const newPoint: SurveyPoint = {
+        id: nextId,
+        easting: Number(targetE.toFixed(3)),
+        northing: Number(targetN.toFixed(3)),
+        elevation: elev,
+        rawCode: "PB",
+        category: "boundary",
+        description: `Digitized beacon ${nextId}`,
+      };
+
+      historyManager.current.push(`Add Beacon ${nextId}`, result.points);
+      updateHistoryCapabilities();
+      onUpdatePoints?.([...result.points, newPoint]);
+      return;
+    }
+
+    // 2. Vertex Dragging Mode
+    if (digitizingMode === "vertex_edit") {
+      const nearest = result.points.find(
+        (p) => Math.hypot(p.easting - worldE, p.northing - worldN) <= 14 / zoom
+      );
+      if (nearest) {
+        historyManager.current.push(`Move Vertex ${nearest.id}`, result.points);
+        updateHistoryCapabilities();
+        setDraggingPointId(nearest.id);
+        return;
+      }
+    }
+
+    // Default Pan Navigation
     setIsDragging(true);
     setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
   };
@@ -512,6 +727,32 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
 
     const worldE = toWorldE(mx);
     const worldN = toWorldN(my);
+
+    // Snapping calculation in editing modes
+    if (digitizingMode !== "navigate") {
+      const otherPoints = draggingPointId
+        ? result.points.filter((p) => p.id !== draggingPointId)
+        : result.points;
+      const snap = findNearestSnapTarget(worldE, worldN, otherPoints, result.vectors, 14 / zoom);
+      setSnapTarget(snap);
+
+      // Live dragging update
+      if (draggingPointId) {
+        const finalE = snap.snapped ? snap.x : worldE;
+        const finalN = snap.snapped ? snap.y : worldN;
+        const updated = result.points.map((p) =>
+          p.id === draggingPointId
+            ? { ...p, easting: Number(finalE.toFixed(3)), northing: Number(finalN.toFixed(3)) }
+            : p
+        );
+        onUpdatePoints?.(updated);
+        return;
+      }
+    } else {
+      if (snapTarget.snapped) {
+        setSnapTarget({ snapped: false, x: 0, y: 0, elevation: 1680, type: "none", distanceWorld: Infinity });
+      }
+    }
 
     // Approximate elevation from nearest vertex
     let nearestElev = 1680;
@@ -538,7 +779,12 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     }
   };
 
-  const handleMouseUp = () => setIsDragging(false);
+  const handleMouseUp = () => {
+    setIsDragging(false);
+    if (draggingPointId) {
+      setDraggingPointId(null);
+    }
+  };
 
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
@@ -558,8 +804,27 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     setZoom(newZoom);
   };
 
+  const handleAddCogoLeg = () => {
+    const anchor = result.points.find((p) => p.id === cogoAnchorId) || result.points[0];
+    if (!anchor) return;
+    const nextId = getNextPointId(result.points, "BK");
+    const newPt = calculateCogoLeg(
+      anchor,
+      cogoBearing,
+      cogoDistance,
+      nextId,
+      "PB",
+      "boundary",
+      result.points
+    );
+    historyManager.current.push(`COGO Leg ${nextId} from ${anchor.id}`, result.points);
+    updateHistoryCapabilities();
+    setCogoAnchorId(newPt.id);
+    onUpdatePoints?.([...result.points, newPt]);
+  };
+
   return (
-    <div className="relative w-full h-[calc(100vh-125px)] bg-[#0B0F17] overflow-hidden flex">
+    <div className="relative w-full h-[calc(100vh-125px)] bg-[#0B0F17] overflow-hidden flex select-none">
       {/* 2D Canvas */}
       <canvas
         ref={canvasRef}
@@ -589,16 +854,25 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
             className={`px-2.5 py-1 text-xs font-semibold rounded transition cursor-pointer ${
               basemap === "satellite" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
             }`}
-            title="True-Color Aerial Imagery"
+            title="Real ESRI World Imagery (High-Res Satellite)"
           >
             Satellite
+          </button>
+          <button
+            onClick={() => setBasemap("osm")}
+            className={`px-2.5 py-1 text-xs font-semibold rounded transition cursor-pointer ${
+              basemap === "osm" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
+            }`}
+            title="OpenStreetMap Standard Slippy Tiles"
+          >
+            OSM Map
           </button>
           <button
             onClick={() => setBasemap("viirs")}
             className={`px-2.5 py-1 text-xs font-semibold rounded transition cursor-pointer ${
               basemap === "viirs" ? "bg-amber-600 text-white" : "text-slate-400 hover:text-white"
             }`}
-            title="Night Lights Overlay (VIIRS-inspired — generic reference)"
+            title="Real NASA GIBS Night-Time Lights (VIIRS Black Marble)"
           >
             Night Lights
           </button>
@@ -610,6 +884,87 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
             title="Clean Engineering Blueprint"
           >
             CAD Light
+          </button>
+        </div>
+
+        {/* Digitizing & Advanced Cadastral COGO Toolbar */}
+        <div className="bg-slate-900/95 backdrop-blur border border-slate-800 rounded-lg p-1 flex items-center gap-1 shadow-xl">
+          <button
+            onClick={() => setDigitizingMode("navigate")}
+            className={`p-1.5 rounded transition cursor-pointer ${
+              digitizingMode === "navigate"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            }`}
+            title="Navigation / Pan Mode"
+          >
+            <MousePointer className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setDigitizingMode("drop_point")}
+            className={`p-1.5 rounded transition cursor-pointer ${
+              digitizingMode === "drop_point"
+                ? "bg-emerald-600 text-white shadow-sm"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            }`}
+            title="Drop Beacon Tool (Click canvas with auto-elevation & snapping)"
+          >
+            <MapPin className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => {
+              setDigitizingMode("cogo_traverse");
+              if (!cogoAnchorId && result.points.length > 0) {
+                setCogoAnchorId(result.points[0].id);
+              }
+            }}
+            className={`p-1.5 rounded transition cursor-pointer ${
+              digitizingMode === "cogo_traverse"
+                ? "bg-amber-600 text-white shadow-sm"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            }`}
+            title="COGO Metes & Bounds Traversal (Bearing & Distance Drafting)"
+          >
+            <Compass className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setDigitizingMode("vertex_edit")}
+            className={`p-1.5 rounded transition cursor-pointer ${
+              digitizingMode === "vertex_edit"
+                ? "bg-cyan-600 text-white shadow-sm"
+                : "text-slate-400 hover:text-white hover:bg-slate-800"
+            }`}
+            title="Vertex Editor (Drag & snap vertices)"
+          >
+            <Move className="w-4 h-4" />
+          </button>
+
+          <div className="w-[1px] h-4 bg-slate-800 mx-1" />
+
+          {/* Undo / Redo */}
+          <button
+            onClick={handleUndo}
+            disabled={!canUndo}
+            className={`p-1.5 rounded transition cursor-pointer ${
+              canUndo
+                ? "text-slate-300 hover:text-white hover:bg-slate-800"
+                : "text-slate-600 cursor-not-allowed"
+            }`}
+            title="Undo Geometry Action (Ctrl+Z)"
+          >
+            <Undo2 className="w-4 h-4" />
+          </button>
+          <button
+            onClick={handleRedo}
+            disabled={!canRedo}
+            className={`p-1.5 rounded transition cursor-pointer ${
+              canRedo
+                ? "text-slate-300 hover:text-white hover:bg-slate-800"
+                : "text-slate-600 cursor-not-allowed"
+            }`}
+            title="Redo Geometry Action (Ctrl+Y)"
+          >
+            <Redo2 className="w-4 h-4" />
           </button>
         </div>
 
@@ -657,6 +1012,56 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Floating COGO Metes-and-Bounds Input Ribbon */}
+      {digitizingMode === "cogo_traverse" && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-slate-900/95 backdrop-blur border border-amber-500/40 rounded-xl px-4 py-2 flex items-center gap-3 shadow-2xl z-20 text-xs">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-amber-400 font-bold uppercase">Anchor Beacon:</span>
+            <select
+              value={cogoAnchorId}
+              onChange={(e) => setCogoAnchorId(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-xs font-mono focus:outline-none"
+            >
+              {result.points.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.id} ({p.easting.toFixed(1)}, {p.northing.toFixed(1)})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-slate-400">Bearing:</span>
+            <input
+              type="text"
+              value={cogoBearing}
+              onChange={(e) => setCogoBearing(e.target.value)}
+              placeholder="45-30-00"
+              className="w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white font-mono text-xs focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] text-slate-400">Distance (m):</span>
+            <input
+              type="number"
+              value={cogoDistance}
+              onChange={(e) => setCogoDistance(Number(e.target.value))}
+              placeholder="50.0"
+              className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white font-mono text-xs focus:outline-none"
+            />
+          </div>
+
+          <button
+            onClick={handleAddCogoLeg}
+            className="flex items-center gap-1 bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-1 rounded transition cursor-pointer"
+          >
+            <Check className="w-3.5 h-3.5" />
+            <span>Add Leg</span>
+          </button>
+        </div>
+      )}
 
       {/* Dynamic Layer Manager Panel */}
       {showLayerPanel && (

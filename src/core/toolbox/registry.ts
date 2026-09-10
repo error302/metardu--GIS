@@ -21,6 +21,12 @@ import { evaluateSuitabilityGrid, DEFAULT_MCDA_WEIGHTS } from "../mcda-suitabili
 import { modelEnergyClusters, DEFAULT_OFFGRID_PARAMS } from "../energy-catchment";
 import { adjustTraverseBowditch } from "../traverse-adjust";
 import { auditTopologyDefects, repairTopology } from "../topology";
+import {
+  computeThiessenPolygons,
+  executeSpatialJoin,
+  computeConvexHull,
+  subdivideParcelEqualArea,
+} from "../spatial-analysis";
 
 export type ToolCategory =
   | "Vector Geometry"
@@ -421,6 +427,183 @@ export const TOOLBOX_REGISTRY: GeoprocessingTool[] = [
           "Linear Misclosure": `${report.linearMisclosureM} m`,
           "Precision Ratio": report.precisionFraction,
           "Statutory Status": report.status,
+        },
+      };
+    },
+  },
+
+  // ── 8. Thiessen / Voronoi Polygons ──
+  {
+    id: "thiessen-voronoi-tool",
+    name: "Thiessen (Voronoi) Polygons",
+    category: "Spatial Analysis",
+    description: "Constructs planar Thiessen/Voronoi service area polygons around surveyed point facilities or clusters.",
+    iconName: "Maximize2",
+    params: [
+      {
+        name: "filterCategory",
+        label: "Point Category Filter",
+        type: "select",
+        defaultValue: "all",
+        options: [
+          { label: "All Survey Points", value: "all" },
+          { label: "Buildings & Facilities Only", value: "building" },
+          { label: "Boundary Beacons Only", value: "boundary" },
+          { label: "Control Points Only", value: "control" },
+        ],
+        description: "Filter points used as seeds for polygon generation.",
+      },
+    ],
+    run: async (pipeline, params) => {
+      const t0 = performance.now();
+      const cat = params.filterCategory || "all";
+      const seedPoints = cat === "all" ? pipeline.points : pipeline.points.filter((p) => p.category === cat);
+
+      if (seedPoints.length < 2) {
+        throw new Error("Voronoi polygon generation requires at least 2 seed points.");
+      }
+
+      // Compute bounding box
+      let minE = Infinity, maxE = -Infinity, minN = Infinity, maxN = -Infinity;
+      for (const p of pipeline.points) {
+        if (p.easting < minE) minE = p.easting;
+        if (p.easting > maxE) maxE = p.easting;
+        if (p.northing < minN) minN = p.northing;
+        if (p.northing > maxN) maxN = p.northing;
+      }
+
+      const cells = computeThiessenPolygons(seedPoints, { minE, maxE, minN, maxN });
+      const durationMs = Number((performance.now() - t0).toFixed(1));
+
+      return {
+        toolId: "thiessen-voronoi-tool",
+        toolName: "Thiessen (Voronoi) Polygons",
+        durationMs,
+        message: `Generated ${cells.length} Voronoi catchment polygons.`,
+        metrics: {
+          "Total Cells": cells.length,
+          "Seed Count": seedPoints.length,
+          "Mean Cell Area": cells.length > 0 ? `${(cells.reduce((s, c) => s + c.areaHa, 0) / cells.length).toFixed(2)} Ha` : "0 Ha",
+        },
+      };
+    },
+  },
+
+  // ── 9. Spatial Join (Point-in-Polygon) ──
+  {
+    id: "spatial-join-tool",
+    name: "Spatial Join (Point-in-Polygon)",
+    category: "Spatial Analysis",
+    description: "Aggregates point facilities within cadastral parcels, computing count, average elevation, and sum of energy demand.",
+    iconName: "Layers",
+    params: [
+      {
+        name: "targetGeometry",
+        label: "Target Polygon Layer",
+        type: "select",
+        defaultValue: "boundary",
+        options: [
+          { label: "Cadastral Boundary Polygon", value: "boundary" },
+        ],
+        description: "Polygon feature to aggregate points within.",
+      },
+    ],
+    run: async (pipeline) => {
+      const t0 = performance.now();
+      if (!pipeline.boundary || pipeline.boundary.points.length < 3) {
+        throw new Error("Spatial Join requires an active cadastral boundary polygon.");
+      }
+
+      const polyCoords = pipeline.boundary.points.map((p) => [p.easting, p.northing] as [number, number]);
+      const results = executeSpatialJoin(
+        [{ id: pipeline.boundary.id, name: pipeline.boundary.name, coordinates: polyCoords }],
+        pipeline.points
+      );
+      const durationMs = Number((performance.now() - t0).toFixed(1));
+      const res = results[0];
+
+      return {
+        toolId: "spatial-join-tool",
+        toolName: "Spatial Join (Point-in-Polygon)",
+        durationMs,
+        message: `Aggregated ${res.pointCount} points inside parcel "${res.polygonName}".`,
+        metrics: {
+          "Contained Points": res.pointCount,
+          "Average Elevation": `${res.averageElevationM} m MSL`,
+          "Dominant Category": res.dominantCategory,
+          "Aggregated Demand": res.totalDemandKwh ? `${res.totalDemandKwh} kWh/day` : "N/A",
+        },
+      };
+    },
+  },
+
+  // ── 10. Convex Hull Generator ──
+  {
+    id: "convex-hull-tool",
+    name: "Convex Hull Generator",
+    category: "Vector Geometry",
+    description: "Computes the minimal convex bounding polygon enclosing all survey points in O(N log N) time.",
+    iconName: "Shield",
+    params: [],
+    run: async (pipeline) => {
+      const t0 = performance.now();
+      const coords = pipeline.points.map((p) => [p.easting, p.northing] as [number, number]);
+      if (coords.length < 3) {
+        throw new Error("Convex Hull generation requires at least 3 points.");
+      }
+
+      const hull = computeConvexHull(coords);
+      const durationMs = Number((performance.now() - t0).toFixed(1));
+
+      return {
+        toolId: "convex-hull-tool",
+        toolName: "Convex Hull Generator",
+        durationMs,
+        message: `Computed convex hull with ${hull.length} vertices enclosing ${pipeline.points.length} points.`,
+        metrics: {
+          "Hull Vertices": hull.length,
+          "Total Points Enclosed": pipeline.points.length,
+        },
+      };
+    },
+  },
+
+  // ── 11. Cadastral Equal-Area Subdivision ──
+  {
+    id: "parcel-subdivision-tool",
+    name: "Cadastral Equal-Area Subdivision",
+    category: "Cadastral & COGO",
+    description: "Subdivides a parent boundary parcel into N approximately equal-area subplots along the primary survey axis.",
+    iconName: "Scissors",
+    params: [
+      {
+        name: "subdivisionCount",
+        label: "Number of Sub-Parcels (2-10)",
+        type: "number",
+        defaultValue: 2,
+        description: "Target number of equal-area sub-parcels to create.",
+      },
+    ],
+    run: async (pipeline, params) => {
+      const t0 = performance.now();
+      if (!pipeline.boundary || pipeline.boundary.points.length < 3) {
+        throw new Error("Cadastral subdivision requires an active closed boundary polygon.");
+      }
+
+      const count = Number(params.subdivisionCount) || 2;
+      const polyCoords = pipeline.boundary.points.map((p) => [p.easting, p.northing] as [number, number]);
+      const res = subdivideParcelEqualArea(polyCoords, count);
+      const durationMs = Number((performance.now() - t0).toFixed(1));
+
+      return {
+        toolId: "parcel-subdivision-tool",
+        toolName: "Cadastral Equal-Area Subdivision",
+        durationMs,
+        message: `Subdivided ${res.originalAreaHa} Ha parcel into ${res.subParcels.length} sub-plots (~${(res.originalAreaHa / count).toFixed(3)} Ha each).`,
+        metrics: {
+          "Original Area": `${res.originalAreaHa} Ha (${res.originalAreaM2} m²)`,
+          "Sub-Parcels Created": res.subParcels.length,
+          "Target Area per Plot": `${(res.originalAreaHa / count).toFixed(3)} Ha`,
         },
       };
     },
