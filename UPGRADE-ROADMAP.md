@@ -169,6 +169,21 @@ Global Forest Watch monitoring watchlists on tracked parcels, and
 Overpass **multipolygon relation** assembly (needs a ring-assignment
 engine with its own parity harness).
 
+**Delivered since** (OSINT wave 3): all three deferrals above landed
+key-free — **multipolygon assembly** (`src/core/osint/assembly.ts`:
+endpoint-exact fragment chaining, containment classification for
+role-less members, smallest-containing-outer hole assignment, RFC 7946
+orientation, strict skip-and-count for unclosable data;
+`tests/osint-assembly.test.ts`); **Sentinel-2 epoch change screens**
+(`src/core/osint/sentinel2.ts`: EOX s2cloudless annual mosaics
+2017–2024, verified live CORS-open — no scene-pair API needed; luma
+differencing after histogram-matching radiometric normalization,
+measurable ~300 m flag cells, CSV/GeoJSON evidence downloads;
+`tests/osint-sentinel2.test.ts`); **FIRMS watchlists**
+(`src/core/osint/firms.ts`: VIIRS/MODIS area-CSV client, deterministic
+FNV-1a alert ids, persisted seen-ring monitors with exact new-alert
+diffs, importable coded points; `tests/osint-firms.test.ts`).
+
 ---
 
 ## Part II — Platform Upgrade Roadmap
