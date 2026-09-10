@@ -59,7 +59,8 @@ function niceStep(raw: number): number {
   return (m >= 5 ? 5 : m >= 2 ? 2 : 1) * mag;
 }
 
-function scaleDenominatorLabel(pxPerMetre: number): number {
+/** Paper scale denominator implied by a ground resolution in m/px. */
+export function scaleDenominatorLabel(pxPerMetre: number): number {
   // 1:N = ground metres per paper metre. One pixel is 1/PX_PER_MM mm of
   // paper, so N = (1/pxPerMetre) / (1/(PX_PER_MM·1000)) = PX_PER_MM·1000/pxPerMetre.
   const denom = (PX_PER_MM * 1000) / pxPerMetre;
@@ -146,15 +147,21 @@ function boundsForFit(result: PipelineResult, fit: ComposerMapFrame["fit"]) {
 }
 
 function buildFrameProj(result: PipelineResult, el: ComposerMapFrame): FrameProj | null {
-  const bounds = boundsForFit(result, el.fit);
+  // Atlas sheets pass an explicit ground extent — no fitting, no padding.
+  const override = el.extentOverride ?? null;
+  const raw = override ?? boundsForFit(result, el.fit);
   const px = { x: el.x * PX_PER_MM, y: el.y * PX_PER_MM, w: el.w * PX_PER_MM, h: el.h * PX_PER_MM };
-  if (!bounds) return null;
-  const padE = (bounds.maxE - bounds.minE) * 0.12;
-  const padN = (bounds.maxN - bounds.minN) * 0.12;
-  const b = {
-    minE: bounds.minE - padE, maxE: bounds.maxE + padE,
-    minN: bounds.minN - padN, maxN: bounds.maxN + padN,
-  };
+  if (!raw) return null;
+  const b = override
+    ? { minE: raw.minE, maxE: raw.maxE, minN: raw.minN, maxN: raw.maxN }
+    : (() => {
+        const padE = (raw.maxE - raw.minE) * 0.12;
+        const padN = (raw.maxN - raw.minN) * 0.12;
+        return {
+          minE: raw.minE - padE, maxE: raw.maxE + padE,
+          minN: raw.minN - padN, maxN: raw.maxN + padN,
+        };
+      })();
   let pxPerM: number;
   if (el.scaleDenominator && el.scaleDenominator > 0) {
     // 1:N on paper at 96 dpi → ground metres per px → px per ground metre.
@@ -197,7 +204,7 @@ const CONTOUR_MINOR = "#C8CFD6";
 const CONTOUR_MAJOR = "#8E99A4";
 const CONTOUR_LABEL_INK = "#4A555E";
 
-function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
+export function renderMapFrame(result: PipelineResult, el: ComposerMapFrame): string {
   const px = { x: el.x * PX_PER_MM, y: el.y * PX_PER_MM, w: el.w * PX_PER_MM, h: el.h * PX_PER_MM };
   const head = `
     <g id="${esc(el.id)}">
@@ -752,7 +759,7 @@ function renderLegend(
   return out.join("\n");
 }
 
-function renderNorthArrow(el: Extract<ComposerElement, { kind: "north-arrow" }>): string {
+export function renderNorthArrow(el: Extract<ComposerElement, { kind: "north-arrow" }>): string {
   const cx = el.x * PX_PER_MM;
   const cy = el.y * PX_PER_MM;
   const r = (el.sizeMm * PX_PER_MM) / 2;
@@ -764,7 +771,7 @@ function renderNorthArrow(el: Extract<ComposerElement, { kind: "north-arrow" }>)
   </g>`;
 }
 
-function renderScaleBar(
+export function renderScaleBar(
   el: Extract<ComposerElement, { kind: "scale-bar" }>,
   frames: { id: string; pxPerM: number }[],
 ): string {

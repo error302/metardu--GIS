@@ -255,4 +255,97 @@ function makeResult(): PipelineResult {
   console.log("PASS: planning is deterministic and NaN-free");
 }
 
+/* ---------- 11. Sheet renderer ---------- */
+import { renderAtlasSheet, renderAtlasIndexSheet } from "../src/core/composer/atlas-render";
+import { renderTemplate, validateSheetSvg } from "../src/core/composer/render";
+
+{
+  const plan = planAtlasSeries({
+    extent: { minE: 0, maxE: 10000, minN: 0, maxN: 6000 },
+    page: A3L, scaleDenominator: null, maxSheets: 9, overlapFrac: 0.10,
+  })!;
+  const result = makeResult();
+  // Reposition the fixture near the atlas extent so the sheet shows content.
+  const shifted = makeResult();
+  shifted.points = shifted.points.map((p) => ({ ...p, easting: p.easting + 1200, northing: p.northing + 1300 }));
+  shifted.vectors = shifted.vectors.map((v) => ({
+    ...v, points: v.points.map((p) => ({ ...p, easting: p.easting + 1200, northing: p.northing + 1300 })),
+  }));
+  shifted.boundary = {
+    ...shifted.boundary!,
+    points: shifted.boundary!.points.map((p) => ({ ...p, easting: p.easting + 1200, northing: p.northing + 1300 })),
+  };
+
+  const sheet = renderAtlasSheet(plan, plan.sheets[4], shifted); // B2, a fully interior sheet
+  assert.ok(!/NaN|Infinity|undefined/.test(sheet.svg), "no NaN/Infinity in sheet SVG");
+  assert.deepStrictEqual(validateSheetSvg(sheet.svg), []);
+  assert.ok(sheet.svg.includes("SHEET B2"));
+  assert.ok(sheet.svg.includes("Sheet 5 of 9"));
+  // Interior sheet carries four neighbour go-to tabs.
+  for (const nb of ["A2", "B3", "C2", "B1"]) {
+    assert.ok(sheet.svg.includes(nb), `neighbour label ${nb} must appear`);
+  }
+  // Graticule lines sit at absolute round grid values (continuous across
+  // sheets). B2 spans E 3040..6960 -> 1 km lines at 4,000/5,000/6,000;
+  // N 1760..4240 -> 500 m lines at 2,000/2,500/3,000/3,500/4,000.
+  assert.ok(sheet.svg.includes("4,000 m E"), "eastings labelled at absolute km grid");
+  assert.ok(sheet.svg.includes("2,000 m N"), "northings labelled at absolute 500 m grid");
+  // Footer identity line.
+  assert.ok(sheet.svg.includes("SHEET B2 (5 OF 9)"));
+  assert.ok(sheet.svg.includes("1:10,000"));
+  assert.ok(sheet.svg.includes("Arc 1960 / UTM zone 37S"));
+  // Edge sheet drops the missing-neighbour tab.
+  const corner = renderAtlasSheet(plan, plan.sheets[0], shifted); // A1: no N, no W
+  assert.ok(!corner.svg.includes("\u2191"), "corner sheet has no north tab");
+  assert.ok(!corner.svg.includes("\u2190"), "corner sheet has no west tab");
+  assert.ok(corner.svg.includes("A2"));
+  assert.ok(corner.svg.includes("B1"));
+  // Foreign sheet label is refused.
+  assert.throws(() => renderAtlasSheet(plan, { ...plan.sheets[0], label: "Z9" }, shifted));
+  // Determinism.
+  assert.strictEqual(renderAtlasSheet(plan, plan.sheets[4], shifted).svg, sheet.svg);
+  console.log("PASS: atlas sheet renders identity, neighbours, graticule, footer");
+}
+
+/* ---------- 12. Index sheet ---------- */
+{
+  const plan = planAtlasSeries({
+    extent: { minE: 0, maxE: 10000, minN: 0, maxN: 6000 },
+    page: A3L, scaleDenominator: null, maxSheets: 9, overlapFrac: 0.10,
+  })!;
+  const result = makeResult();
+  const index = renderAtlasIndexSheet(plan, result);
+  assert.ok(!/NaN|Infinity|undefined/.test(index.svg));
+  assert.deepStrictEqual(validateSheetSvg(index.svg), []);
+  assert.ok(index.svg.includes("SHEET INDEX"));
+  for (const s of plan.sheets) assert.ok(index.svg.includes(s.label), `index must show ${s.label}`);
+  assert.ok(index.svg.includes("PROJECT EXTENT"));
+  assert.ok(index.svg.includes("approximate scale"));
+  assert.ok(index.svg.includes("10% sheet overlap"));
+  assert.strictEqual(renderAtlasIndexSheet(plan, result).svg, index.svg);
+  console.log("PASS: index sheet lists every sheet and the project extent");
+}
+
+/* ---------- 13. extentOverride integration (renderTemplate) ---------- */
+{
+  const result = makeResult();
+  // Inside-extent vector should draw; the same vector far outside the
+  // override must be filtered by the frame.
+  const frame = {
+    kind: "map-frame" as const, id: "ov", x: 20, y: 40, w: 200, h: 120,
+    fit: "features" as const, scaleDenominator: 1000 as number | null,
+    extentOverride: { minE: 4900, maxE: 5100, minN: 7950, maxN: 8050 },
+    layers: { points: false, vectors: true, boundary: false, contours: false, suitability: false, hazards: false, energy: false, graticule: false },
+  };
+  const t: import("../src/core/composer/template").ComposerTemplate = {
+    id: "t-override", title: "override", version: 1,
+    page: { size: "A4", orientation: "landscape" },
+    header: null, footer: null, elements: [frame],
+  };
+  const svg = renderTemplate(t, result).svg;
+  assert.ok(svg.includes("<polyline"), "in-extent vector renders");
+  assert.ok(!/NaN|Infinity/.test(svg));
+  console.log("PASS: map frame honours the explicit extent override");
+}
+
 console.log("ALL ATLAS PLANNER TESTS PASSED");

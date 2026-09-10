@@ -59,6 +59,13 @@ export interface ComposerMapFrame {
   layers: MapFrameLayers;
   /** Suppress beacon badges beyond this count (dot mode instead). */
   labelLimit?: number;
+  /**
+   * Explicit ground extent in metres (additive v1 field) — used by the
+   * Atlas Series renderer to place every sheet at the exact planned
+   * extent and uniform scale. When present it replaces the fitted extent
+   * and NO fit padding is applied.
+   */
+  extentOverride?: { minE: number; maxE: number; minN: number; maxN: number } | null;
 }
 
 /** A resolved field row: literal text or a computed reference. */
