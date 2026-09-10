@@ -322,13 +322,13 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
   };
 
   return (
-    <div className="p-4 max-w-7xl mx-auto space-y-3 text-slate-100 h-[calc(100vh-125px)] flex flex-col font-['Plus_Jakarta_Sans'] select-none">
+    <div className="p-4 max-w-7xl mx-auto space-y-3 text-ink h-full flex flex-col">
       {/* Top Application Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 border border-slate-800 p-3 rounded-xl shadow-lg">
+      <div className="flex flex-wrap items-center justify-between gap-3 bg-panel border border-line p-3 rounded-[4px] shadow-lg">
         {/* Left: Search & Filter */}
         <div className="flex items-center gap-2.5 flex-1 min-w-[280px]">
           <div className="relative flex-1 max-w-xs">
-            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+            <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-ink-2" />
             <input
               type="text"
               placeholder="Search station, code, attributes..."
@@ -337,11 +337,11 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                 setSearchTerm(e.target.value);
                 setPage(1);
               }}
-              className="w-full bg-slate-950 border border-slate-800 rounded-md pl-9 pr-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
+              className="w-full bg-sunken border border-line rounded-[3px] pl-9 pr-3 py-1.5 text-xs text-ink placeholder-ink-3 focus:outline-none focus:border-accent font-mono"
             />
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs text-slate-400">
+          <div className="flex items-center gap-1.5 text-xs text-ink-2">
             <Filter className="w-3.5 h-3.5" />
             <select
               value={categoryFilter}
@@ -349,7 +349,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                 setCategoryFilter(e.target.value);
                 setPage(1);
               }}
-              className="bg-slate-950 border border-slate-800 rounded-md px-2.5 py-1.5 text-xs text-white focus:outline-none cursor-pointer"
+              className="bg-sunken border border-line rounded-[3px] px-2.5 py-1.5 text-xs text-ink focus:outline-none cursor-pointer"
             >
               <option value="all">All Categories ({result.points.length})</option>
               <option value="boundary">Boundary Beacons</option>
@@ -374,7 +374,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
               setCalcError(null);
               setShowFieldCalc(true);
             }}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-md text-xs font-semibold shadow-md shadow-blue-600/20 transition cursor-pointer"
+            className="flex items-center gap-1.5 bg-accent hover:bg-accent-hover text-ink px-3 py-1.5 rounded-[3px] text-xs font-semibold shadow-md shadow transition cursor-pointer"
             title="Open GIS Field Calculator ($x, $y, $z, expressions)"
           >
             <Calculator className="w-3.5 h-3.5" />
@@ -383,14 +383,14 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
 
           <button
             onClick={() => setShowAddField(true)}
-            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer"
+            className="flex items-center gap-1.5 bg-raised hover:bg-raised text-ink border border-line-strong px-3 py-1.5 rounded-[3px] text-xs font-semibold transition cursor-pointer"
             title="Add a new attribute column"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New Field</span>
           </button>
 
-          <label className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition">
+          <label className="flex items-center gap-1.5 bg-raised hover:bg-raised text-ink border border-line-strong px-3 py-1.5 rounded-[3px] text-xs font-semibold cursor-pointer transition">
             <Upload className="w-3.5 h-3.5" />
             <span>Import CSV / GSI / KML</span>
             <input type="file" accept=".csv,.txt,.gsi,.geojson,.kml" onChange={handleFileUpload} className="hidden" />
@@ -399,7 +399,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
           <div className="flex items-center gap-1">
             <button
               onClick={handleExportCsv}
-              className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-2.5 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer"
+              className="flex items-center gap-1 bg-raised hover:bg-raised text-ink border border-line-strong px-2.5 py-1.5 rounded-[3px] text-xs font-semibold transition cursor-pointer"
               title="Export Attribute Table to CSV"
             >
               <Download className="w-3.5 h-3.5" />
@@ -407,7 +407,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
             </button>
             <button
               onClick={handleExportGeoJson}
-              className="flex items-center gap-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-2.5 py-1.5 rounded-md text-xs font-semibold transition cursor-pointer"
+              className="flex items-center gap-1 bg-raised hover:bg-raised text-ink border border-line-strong px-2.5 py-1.5 rounded-[3px] text-xs font-semibold transition cursor-pointer"
               title="Export FeatureCollection to GeoJSON"
             >
               <Download className="w-3.5 h-3.5" />
@@ -418,41 +418,41 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
       </div>
 
       {/* Sub-Header Status Bar */}
-      <div className="flex items-center justify-between px-2 text-[11px] text-slate-400 font-mono">
+      <div className="flex items-center justify-between px-2 text-[11px] text-ink-2 font-mono">
         <div className="flex items-center gap-4">
-          <span>Total Features: <strong className="text-white">{result.points.length}</strong></span>
-          <span>Filtered: <strong className="text-white">{filteredPoints.length}</strong></span>
+          <span>Total Features: <strong className="text-ink">{result.points.length}</strong></span>
+          <span>Filtered: <strong className="text-ink">{filteredPoints.length}</strong></span>
           <span>
             Selected:{" "}
-            <strong className={selectedPointIds.length > 0 ? "text-amber-400" : "text-slate-400"}>
+            <strong className={selectedPointIds.length > 0 ? "text-accent" : "text-ink-2"}>
               {selectedPointIds.length}
             </strong>
           </span>
           {selectedPointIds.length > 0 && (
             <button
               onClick={() => onSelectPoints([])}
-              className="text-xs text-blue-400 hover:underline cursor-pointer font-sans"
+              className="text-xs text-dt-blue hover:underline cursor-pointer font-sans"
             >
               Clear Selection
             </button>
           )}
         </div>
         <div>
-          <span>CRS: <strong className="text-blue-400">{result.metadata.crs}</strong></span>
+          <span>CRS: <strong className="text-dt-blue">{result.metadata.crs}</strong></span>
         </div>
       </div>
 
       {/* Table Container */}
-      <div className="flex-1 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl flex flex-col">
+      <div className="flex-1 bg-panel border border-line rounded-[4px] overflow-hidden shadow-2xl flex flex-col">
         <div className="flex-1 overflow-auto">
           <table className="w-full text-left border-collapse text-xs">
-            <thead className="bg-slate-950/90 sticky top-0 z-10 border-b border-slate-800 text-[11px] font-semibold text-slate-300">
+            <thead className="bg-sunken sticky top-0 z-10 border-b border-line text-[11px] font-semibold text-ink-2">
               <tr>
                 {/* Select All Checkbox */}
-                <th className="p-2.5 w-10 text-center border-r border-slate-800/80">
-                  <button onClick={handleToggleSelectAll} className="cursor-pointer text-slate-400 hover:text-white">
+                <th className="p-2.5 w-10 text-center border-r border-line">
+                  <button onClick={handleToggleSelectAll} className="cursor-pointer text-ink-2 hover:text-ink">
                     {isAllPageSelected ? (
-                      <CheckSquare className="w-4 h-4 text-amber-400" />
+                      <CheckSquare className="w-4 h-4 text-accent" />
                     ) : (
                       <Square className="w-4 h-4" />
                     )}
@@ -467,17 +467,17 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                   return (
                     <th
                       key={f.name}
-                      className="p-2.5 border-r border-slate-800/80 whitespace-nowrap group select-none"
+                      className="p-2.5 border-r border-line whitespace-nowrap group"
                     >
                       <div className="flex items-center justify-between gap-1.5">
                         <button
                           onClick={() => handleSort(f.name)}
-                          className="flex items-center gap-1 hover:text-white text-left font-mono"
+                          className="flex items-center gap-1 hover:text-ink text-left font-mono"
                         >
                           <span>{f.alias || f.name}</span>
-                          <span className="text-[9px] text-slate-500 font-sans uppercase">({f.type[0]})</span>
+                          <span className="text-[9px] text-ink-3 font-sans uppercase">({f.type[0]})</span>
                           {isSorted ? (
-                            sortAsc ? <ArrowUp className="w-3 h-3 text-blue-400" /> : <ArrowDown className="w-3 h-3 text-blue-400" />
+                            sortAsc ? <ArrowUp className="w-3 h-3 text-dt-blue" /> : <ArrowDown className="w-3 h-3 text-dt-blue" />
                           ) : (
                             <ArrowUpDown className="w-3 h-3 opacity-0 group-hover:opacity-60" />
                           )}
@@ -486,7 +486,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                         {!isCore && (
                           <button
                             onClick={() => handleDeleteField(f.name)}
-                            className="text-slate-600 hover:text-rose-400 p-0.5 rounded opacity-0 group-hover:opacity-100 transition"
+                            className="text-ink-3 hover:text-dt-red p-0.5 rounded opacity-0 group-hover:opacity-100 transition"
                             title={`Delete field "${f.name}"`}
                           >
                             <Trash2 className="w-3 h-3" />
@@ -499,7 +499,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-slate-800/60 font-mono text-[11px]">
+            <tbody className="divide-y divide-line font-mono text-[11px]">
               {currentPagePoints.map((pt) => {
                 const isSelected = selectedPointIds.includes(pt.id);
 
@@ -508,17 +508,17 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                     key={pt.id}
                     className={`transition ${
                       isSelected
-                        ? "bg-amber-500/15 hover:bg-amber-500/20"
-                        : "hover:bg-slate-800/40 odd:bg-slate-900/40"
+                        ? "bg-amber-500/15 hover:bg-accent-dim"
+                        : "hover:bg-raised/60 odd:bg-panel/50"
                     }`}
                   >
                     {/* Row Checkbox */}
-                    <td className="p-2 text-center border-r border-slate-800/60">
+                    <td className="p-2 text-center border-r border-line">
                       <button onClick={() => handleToggleRow(pt.id)} className="cursor-pointer">
                         {isSelected ? (
-                          <CheckSquare className="w-3.5 h-3.5 text-amber-400" />
+                          <CheckSquare className="w-3.5 h-3.5 text-accent" />
                         ) : (
-                          <Square className="w-3.5 h-3.5 text-slate-600 hover:text-slate-400" />
+                          <Square className="w-3.5 h-3.5 text-ink-3 hover:text-ink-2" />
                         )}
                       </button>
                     </td>
@@ -541,7 +541,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                         <td
                           key={f.name}
                           onDoubleClick={() => handleStartEdit(pt.id, f.name, cellVal)}
-                          className="p-2 border-r border-slate-800/60 whitespace-nowrap text-slate-300"
+                          className="p-2 border-r border-line whitespace-nowrap text-ink-2"
                         >
                           {isEditing ? (
                             <div className="flex items-center gap-1">
@@ -554,12 +554,12 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                                   if (e.key === "Enter") handleSaveEdit();
                                   if (e.key === "Escape") setEditingCell(null);
                                 }}
-                                className="bg-slate-950 border border-blue-500 px-1.5 py-0.5 rounded text-white text-xs w-28 focus:outline-none"
+                                className="bg-sunken border border-accent px-1.5 py-0.5 rounded text-ink text-xs w-28 focus:outline-none"
                               />
-                              <button onClick={handleSaveEdit} className="text-emerald-400 hover:text-emerald-300">
+                              <button onClick={handleSaveEdit} className="text-dt-green hover:text-dt-green">
                                 <Check className="w-3 h-3" />
                               </button>
-                              <button onClick={() => setEditingCell(null)} className="text-slate-500 hover:text-slate-300">
+                              <button onClick={() => setEditingCell(null)} className="text-ink-3 hover:text-ink-2">
                                 <X className="w-3 h-3" />
                               </button>
                             </div>
@@ -569,7 +569,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                               className="cursor-text block min-w-[20px]"
                             >
                               {cellVal !== undefined && cellVal !== null ? String(cellVal) : (
-                                <span className="text-slate-600 italic">null</span>
+                                <span className="text-ink-3 italic">null</span>
                               )}
                             </span>
                           )}
@@ -582,7 +582,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
 
               {currentPagePoints.length === 0 && (
                 <tr>
-                  <td colSpan={fields.length + 1} className="p-8 text-center text-slate-500">
+                  <td colSpan={fields.length + 1} className="p-8 text-center text-ink-3">
                     No features match current search and category criteria.
                   </td>
                 </tr>
@@ -592,7 +592,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
         </div>
 
         {/* Pagination Bar */}
-        <div className="bg-slate-950/80 border-t border-slate-800 px-4 py-2 flex items-center justify-between text-xs text-slate-400">
+        <div className="bg-sunken border-t border-line px-4 py-2 flex items-center justify-between text-xs text-ink-2">
           <div>
             Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, sortedPoints.length)} of {sortedPoints.length} features
           </div>
@@ -600,17 +600,17 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
             <button
               disabled={page <= 1}
               onClick={() => setPage((p) => p - 1)}
-              className="px-2.5 py-1 bg-slate-900 border border-slate-800 rounded disabled:opacity-40 hover:bg-slate-800 transition cursor-pointer"
+              className="px-2.5 py-1 bg-panel border border-line rounded disabled:opacity-40 hover:bg-raised transition cursor-pointer"
             >
               Previous
             </button>
-            <span className="font-mono text-white">
+            <span className="font-mono text-ink">
               {page} / {totalPages}
             </span>
             <button
               disabled={page >= totalPages}
               onClick={() => setPage((p) => p + 1)}
-              className="px-2.5 py-1 bg-slate-900 border border-slate-800 rounded disabled:opacity-40 hover:bg-slate-800 transition cursor-pointer"
+              className="px-2.5 py-1 bg-panel border border-line rounded disabled:opacity-40 hover:bg-raised transition cursor-pointer"
             >
               Next
             </button>
@@ -621,36 +621,36 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
       {/* ── Add Field Dialog ── */}
       {showAddField && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 max-w-md w-full shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-white text-sm tracking-wide flex items-center gap-2">
-                <Plus className="w-4 h-4 text-blue-400" />
+          <div className="bg-panel border border-line rounded-[4px] p-5 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-line pb-3">
+              <h3 className="font-bold text-ink text-sm tracking-wide flex items-center gap-2">
+                <Plus className="w-4 h-4 text-dt-blue" />
                 Add New Attribute Field
               </h3>
-              <button onClick={() => setShowAddField(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setShowAddField(false)} className="text-ink-2 hover:text-ink">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             <form onSubmit={handleAddFieldSubmit} className="space-y-3.5 text-xs">
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Field Name</label>
+                <label className="block text-ink-2 font-semibold mb-1">Field Name</label>
                 <input
                   type="text"
                   placeholder="e.g. soil_type, parcel_owner, voltage_kv"
                   value={newFieldName}
                   onChange={(e) => setNewFieldName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+                  className="w-full bg-sunken border border-line rounded-[3px] px-3 py-2 text-ink placeholder-ink-3 focus:outline-none focus:border-accent font-mono"
                   required
                 />
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Field Type</label>
+                <label className="block text-ink-2 font-semibold mb-1">Field Type</label>
                 <select
                   value={newFieldType}
                   onChange={(e) => setNewFieldType(e.target.value as any)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-white focus:outline-none cursor-pointer"
+                  className="w-full bg-sunken border border-line rounded-[3px] px-3 py-2 text-ink focus:outline-none cursor-pointer"
                 >
                   <option value="string">String (Text)</option>
                   <option value="number">Number (Integer / Real)</option>
@@ -659,27 +659,27 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-300 font-semibold mb-1">Default Initial Value</label>
+                <label className="block text-ink-2 font-semibold mb-1">Default Initial Value</label>
                 <input
                   type="text"
                   placeholder="Optional default value"
                   value={newFieldDefault}
                   onChange={(e) => setNewFieldDefault(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+                  className="w-full bg-sunken border border-line rounded-[3px] px-3 py-2 text-ink placeholder-ink-3 focus:outline-none focus:border-accent font-mono"
                 />
               </div>
 
-              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+              <div className="flex justify-end gap-2 pt-2 border-t border-line">
                 <button
                   type="button"
                   onClick={() => setShowAddField(false)}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md transition cursor-pointer"
+                  className="px-3 py-1.5 bg-raised hover:bg-raised text-ink-2 rounded-[3px] transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-md shadow-md shadow-blue-600/30 transition cursor-pointer"
+                  className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-ink font-semibold rounded-[3px] shadow-md shadow transition cursor-pointer"
                 >
                   Add Field
                 </button>
@@ -692,41 +692,41 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
       {/* ── GIS Field Calculator Dialog ── */}
       {showFieldCalc && (
         <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 max-w-2xl w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="bg-panel border border-line rounded-[4px] p-5 max-w-2xl w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-line pb-3">
               <div>
-                <h3 className="font-bold text-white text-base tracking-wide flex items-center gap-2">
-                  <Calculator className="w-5 h-5 text-blue-400" />
+                <h3 className="font-bold text-ink text-base tracking-wide flex items-center gap-2">
+                  <Calculator className="w-5 h-5 text-dt-blue" />
                   GIS Field Calculator
                 </h3>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-ink-2">
                   Compute geometric, spatial, arithmetic and string attributes across dataset features.
                 </p>
               </div>
-              <button onClick={() => setShowFieldCalc(false)} className="text-slate-400 hover:text-white">
+              <button onClick={() => setShowFieldCalc(false)} className="text-ink-2 hover:text-ink">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Target Field Settings */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-slate-950/70 p-3 rounded-lg border border-slate-800">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-sunken p-3 rounded-[3px] border border-line">
               <div>
-                <label className="block text-slate-300 text-xs font-semibold mb-1">Target Field Name</label>
+                <label className="block text-ink-2 text-xs font-semibold mb-1">Target Field Name</label>
                 <input
                   type="text"
                   placeholder="e.g. easting_km, label"
                   value={calcTargetField}
                   onChange={(e) => setCalcTargetField(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+                  className="w-full bg-panel border border-line rounded px-2.5 py-1.5 text-xs text-ink placeholder-ink-3 focus:outline-none focus:border-accent font-mono"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-300 text-xs font-semibold mb-1">Output Type</label>
+                <label className="block text-ink-2 text-xs font-semibold mb-1">Output Type</label>
                 <select
                   value={calcType}
                   onChange={(e) => setCalcType(e.target.value as any)}
-                  className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-xs text-white focus:outline-none cursor-pointer"
+                  className="w-full bg-panel border border-line rounded px-2.5 py-1.5 text-xs text-ink focus:outline-none cursor-pointer"
                 >
                   <option value="number">Number</option>
                   <option value="string">String</option>
@@ -735,12 +735,12 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
               </div>
 
               <div className="flex flex-col justify-end">
-                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+                <label className="flex items-center gap-2 text-xs text-ink-2 cursor-pointer">
                   <input
                     type="checkbox"
                     checked={calcOnlySelected}
                     onChange={(e) => setCalcOnlySelected(e.target.checked)}
-                    className="rounded border-slate-700 text-blue-600 focus:ring-0 cursor-pointer"
+                    className="rounded border-line-strong text-accent focus:ring-0 cursor-pointer"
                   />
                   <span>Only update selected ({selectedPointIds.length})</span>
                 </label>
@@ -749,7 +749,7 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
 
             {/* Expression Presets */}
             <div>
-              <span className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">
+              <span className="block text-xs font-semibold text-ink-2 mb-1.5 uppercase tracking-wider">
                 Common Expression Presets
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -758,10 +758,10 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                     key={p.id}
                     type="button"
                     onClick={() => handleSelectPreset(p)}
-                    className="text-left bg-slate-950/60 hover:bg-slate-800/80 border border-slate-800/80 hover:border-blue-500/50 p-2 rounded text-xs transition cursor-pointer group"
+                    className="text-left bg-sunken hover:bg-raised border border-line hover:border-accent/50 p-2 rounded text-xs transition cursor-pointer group"
                   >
-                    <div className="font-semibold text-slate-200 group-hover:text-blue-400">{p.label}</div>
-                    <div className="text-[10px] text-slate-500 font-mono truncate">{p.expression}</div>
+                    <div className="font-semibold text-ink group-hover:text-dt-blue">{p.label}</div>
+                    <div className="text-[10px] text-ink-3 font-mono truncate">{p.expression}</div>
                   </button>
                 ))}
               </div>
@@ -770,8 +770,8 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
             {/* Expression Editor */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs">
-                <label className="font-semibold text-slate-300">Expression</label>
-                <span className="text-[11px] text-slate-500 font-mono">
+                <label className="font-semibold text-ink-2">Expression</label>
+                <span className="text-[11px] text-ink-3 font-mono">
                   Tokens: $x, $y, $z, $id, $code, $cat, $lat, $lon
                 </span>
               </div>
@@ -780,13 +780,13 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
                 placeholder="e.g. round($x / 1000, 3) or concat($id, ' - ', upper($code))"
                 value={calcExpression}
                 onChange={(e) => setCalcExpression(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 font-mono resize-none"
+                className="w-full bg-sunken border border-line rounded-[3px] p-2.5 text-xs text-ink placeholder-ink-3 focus:outline-none focus:border-accent font-mono resize-none"
               />
             </div>
 
             {/* Function Helper Bar */}
-            <div className="bg-slate-950/50 p-2.5 rounded border border-slate-800 text-[11px] text-slate-400 space-y-1 font-mono">
-              <div className="font-bold text-slate-300">Supported Functions:</div>
+            <div className="bg-sunken/50 p-2.5 rounded border border-line text-[11px] text-ink-2 space-y-1 font-mono">
+              <div className="font-bold text-ink-2">Supported Functions:</div>
               <div className="grid grid-cols-2 gap-1 text-[10px]">
                 <div>round(val, decimals), floor(x), ceil(x), sqrt(x), pow(x, y)</div>
                 <div>concat(s1, s2, ...), upper(s), lower(s), trim(s), substr(s, start, len)</div>
@@ -796,28 +796,28 @@ export const AttributeTable: React.FC<AttributeTableProps> = ({
             </div>
 
             {calcError && (
-              <div className="p-2.5 bg-rose-500/15 border border-rose-500/30 rounded text-rose-400 text-xs">
+              <div className="p-2.5 bg-dt-red/10 border border-dt-red/30 rounded text-dt-red text-xs">
                 {calcError}
               </div>
             )}
 
             {/* Footer Buttons */}
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-              <span className="text-[11px] text-slate-500">
+            <div className="flex items-center justify-between pt-2 border-t border-line">
+              <span className="text-[11px] text-ink-3">
                 Target: {calcOnlySelected ? `${selectedPointIds.length} selected features` : `${result.points.length} features`}
               </span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setShowFieldCalc(false)}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-md text-xs transition cursor-pointer"
+                  className="px-3 py-1.5 bg-raised hover:bg-raised text-ink-2 rounded-[3px] text-xs transition cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleApplyFieldCalc}
-                  className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-md text-xs shadow-md shadow-blue-600/30 transition cursor-pointer"
+                  className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-ink font-semibold rounded-[3px] text-xs shadow-md shadow transition cursor-pointer"
                 >
                   Calculate &amp; Apply
                 </button>

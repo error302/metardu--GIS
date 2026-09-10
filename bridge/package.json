@@ -1,0 +1,14 @@
+{
+  "name": "metardu-postgis-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only HTTP bridge: browser GIS workstation → PostgreSQL/PostGIS",
+  "main": "postgis-bridge.mjs",
+  "scripts": {
+    "start": "node postgis-bridge.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}

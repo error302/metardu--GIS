@@ -1,28 +1,316 @@
 @import "tailwindcss";
 
+/* ============================================================
+   MetaRDU GIS — Design System
+   Reference: professional GIS suites (ArcGIS Pro / QGIS density)
+   Rules:
+   - Neutral gray chrome (zero blue tint). Color belongs to DATA.
+   - One accent (survey amber) used sparingly for primary action.
+   - Hairline 1px borders, 3px radii, 4px spacing grid.
+   - IBM Plex Sans (UI) / IBM Plex Mono (data readouts).
+   ============================================================ */
+
+@theme {
+  /* Chrome surfaces — neutral, not navy */
+  --color-app: #141416;
+  --color-panel: #1b1b1e;
+  --color-sunken: #0f0f11;
+  --color-raised: #232327;
+  --color-overlay: #202023;
+
+  /* Hairlines */
+  --color-line: #2a2a2e;
+  --color-line-strong: #3a3a40;
+
+  /* Ink (text) */
+  --color-ink: #e8e8ea;
+  --color-ink-2: #a4a4aa;
+  --color-ink-3: #70707a;
+
+  /* Single accent — survey amber */
+  --color-accent: #d9a441;
+  --color-accent-hover: #e6b654;
+  --color-accent-dim: rgba(217, 164, 65, 0.13);
+
+  /* Data palette (only ever used for data layers) */
+  --color-dt-blue: #6aa1d8;
+  --color-dt-green: #6fb07c;
+  --color-dt-red: #d97b7b;
+  --color-dt-cyan: #62bfc3;
+  --color-dt-yellow: #d9c95e;
+  --color-dt-orange: #d99a5b;
+
+  --font-sans: "IBM Plex Sans", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", Consolas, monospace;
+}
+
 @layer base {
+  html,
   body {
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
     margin: 0;
     padding: 0;
+    background: var(--color-app);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: rgba(217, 164, 65, 0.28);
   }
 }
 
-/* Precision scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ---------- Reusable chrome primitives ---------- */
+
+/* Small-caps section label (e.g. "ANALYSIS", "BEACON SCHEDULE") */
+.ui-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-3);
 }
 
-::-webkit-scrollbar-track {
-  background: #0B0F17;
+/* Secondary button — hairline, quiet */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  background: var(--color-raised);
+  border: 1px solid var(--color-line-strong);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.ui-btn:hover {
+  background: #2a2a2f;
+  color: var(--color-ink);
+  border-color: #45454c;
+}
+.ui-btn:active {
+  background: #2f2f35;
 }
 
-::-webkit-scrollbar-thumb {
-  background: #1E293B;
+/* Primary action — the ONLY filled-accent button on screen */
+.ui-btn-accent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #17130a;
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease;
+}
+.ui-btn-accent:hover {
+  background: var(--color-accent-hover);
+}
+.ui-btn-accent:active {
+  background: #c99838;
+}
+
+/* Icon-only toolbar button (28px hit area) */
+.ui-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--color-ink-2);
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.ui-btn-icon:hover {
+  background: var(--color-raised);
+  color: var(--color-ink);
+}
+.ui-btn-icon.is-active {
+  background: var(--color-accent-dim);
+  color: var(--color-accent);
+}
+
+/* Compact select — for scenario / CRS / filters */
+.ui-select {
+  height: 26px;
+  padding: 0 24px 0 8px;
+  font-size: 12px;
+  color: var(--color-ink);
+  background-color: var(--color-raised);
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2370707a' stroke-width='2.5'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 7px center;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 3px;
+  cursor: pointer;
+  appearance: none;
+  max-width: 340px;
+}
+.ui-select:hover {
+  border-color: #45454c;
+}
+.ui-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+.ui-select option {
+  background: var(--color-panel);
+  color: var(--color-ink);
+}
+
+/* Text input */
+.ui-input {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--color-ink);
+  background: var(--color-sunken);
+  border: 1px solid var(--color-line-strong);
+  border-radius: 3px;
+}
+.ui-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+.ui-input::placeholder {
+  color: var(--color-ink-3);
+  font-family: var(--font-sans);
+}
+
+/* KPI / instrument readout block — replaces SaaS stat cards */
+.ui-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: 3px;
+  min-width: 0;
+}
+.ui-stat-value {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 500;
+  color: var(--color-ink);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.ui-stat-value .ui-stat-unit {
+  font-size: 12px;
+  color: var(--color-ink-3);
+  margin-left: 3px;
+}
+
+/* Panel section header */
+.ui-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-line);
+}
+
+/* Card / section surface */
+.ui-card {
+  background: var(--color-panel);
+  border: 1px solid var(--color-line);
   border-radius: 3px;
 }
 
+/* Vertical toolbar separator */
+.ui-vsep {
+  width: 1px;
+  height: 16px;
+  background: var(--color-line-strong);
+  flex-shrink: 0;
+}
+
+/* ---------- Navigation tab (header row 2) ---------- */
+.ui-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-ink-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease;
+}
+.ui-tab:hover {
+  color: var(--color-ink);
+}
+.ui-tab.is-active {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.ui-tab.is-active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  background: var(--color-accent);
+}
+
+/* ---------- Scrollbars ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #333338;
+  border-radius: 4px;
+  border: 2px solid var(--color-app);
+}
 ::-webkit-scrollbar-thumb:hover {
-  background: #334155;
+  background: #45454c;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---------- Numeric data cells ---------- */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* ---------- Pipeline progress sweep ---------- */
+@keyframes pipeline {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
 }

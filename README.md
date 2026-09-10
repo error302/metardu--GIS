@@ -4,6 +4,8 @@
 
 MetaRDU GIS Studio is a high-performance, offline-capable geospatial workstation engineered for professional GIS specialists, licensed land surveyors, municipal urban planners, and off-grid energy engineers. It bridges the gap between raw field surveys, statutory cadastral governance, multi-criteria planning, and decentralized electrification—operating with sub-second execution speeds and zero server roundtrips.
 
+The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in a Web Worker, every figure on every statutory document is computed from live pipeline state (never fabricated), and the workstation reads and writes the exchange formats the African GIS economy actually uses—Shapefile, GeoPackage, DXF, LandXML, GeoJSON.
+
 ---
 
 ## Capabilities & Feature Matrix
@@ -78,15 +80,57 @@ MetaRDU GIS Studio is a high-performance, offline-capable geospatial workstation
   * Off-grid electrification parameters
   * MCDA suitability weights
 * 1-Click "Save Project" and "Open Project" from the application header.
+* Optional CRDT change-set export (`.metardu-changes.json`) for field-to-office sync.
+
+### 8. Data Ingress & Egress (Field-to-Office Interchange)
+* **Read:** Shapefile (`.shp` + `.dbf` + `.shx` + `.prj`, shape types 1/3/5/8 with Z/M variants), dBASE III field typing (C/N/F/D/L), GeoJSON, CSV/TSV, KML, LandXML, GeoPackage (`.gpkg` via lazy sql.js WASM), and live PostGIS layers (read-only HTTP bridge with single-statement write guards).
+* **Write:** GeoPackage (OGC-conformant, byte-verified), AutoCAD DXF R2018, LandXML 1.2, RFC 7946 GeoJSON, print-ready SVG sheets, CSV schedules, and one-click statutory lodgement ZIP bundles.
+* `.prj` sidecars are parsed by a dependency-free WKT engine (TM/UTM, LCC, Mercator, Cassini, Albers, LAEA, Stereographic, HOM, Krovak) and geometry is auto-reprojected to the working CRS with a disclosed note.
+
+### 9. Platform Architecture (Performance & Reliability)
+* **Web Worker pipeline** with a 9-stage progress protocol; transparent main-thread fallback keeps the UI responsive during heavy runs.
+* **Uniform-grid spatial index** (points/triangles/segments) with brute-force parity tests; MCDA distance queries drop from O(n·m) to O(local).
+* **Renderer v2:** static-scene caching, viewport culling, LOD dot-mode beyond ~2,000 visible points.
+* **Undo/redo command history** (Ctrl+Z / Ctrl+Shift+Z) over labeled document operations.
+* **Benchmark harness** with hard, CI-exitable budgets over deterministic 10k/50k synthetic scenarios (`npm run bench`).
+* **Machine-readable provenance graph** (FNV-1a digest, tamper-evident) embedded in every export—each figure carries its method citation, resolved inputs, and stated tolerance.
+* **Edge-first CRDT** (LWW registers + add-wins sets) for offline-first multi-device project sync, with an optional zero-dependency LAN relay.
+* **Live ground truth, offline-first:** XYZ raster basemaps (OSM / Esri / Sentinel-2 cloudless / OpenTopoMap) with Cache-API persistence, the official NGA EGM2008 2.5′ geoid grid for East Africa, Terrarium terrain-tile DEM probes, and Copernicus DEM GLO-30 regional grids (in-browser GeoTIFF reader, Planetary Computer crop endpoint).
+
+### 10. Print Composer (Desktop-Grade Cartography)
+* Versioned template schema (ISO A4–A1, mm geometry) with 13 composable element kinds: map frames (fit or fixed 1:N), computed tables, KPI strips, legends, method-note provenance, locator insets, certification and signoff blocks.
+* Statutory Form 4 and Planning Atlas presets route through one render engine with live fit preview, SVG download, 300-DPI PNG rasterisation (fonts embedded), and @page-sized print.
+* **Atlas cartography:** TIN facet shaded relief (NW 315° / 45° sun) beneath the theme, index-contour elevation labels with halo text (arc-length placement, upright, budgeted), point-label decluttering (hazard > cluster), boundary casing, graticule ticks, and a locator inset placing the parcel on an adaptive UTM grid with the zone captioned.
+* Legends disclose their classification: per-class counts and the exact MCDA class breaks from the engine's own constants — every colour on the sheet is re-derivable.
+* Sensitivity analysis: MCDA weight sliders re-evaluate the composed decision sheet live, with exact weights and uncertainty disclosed on the sheet.
+
+### 11. Field-to-Statute Workflow
+* Guided traverse workflow: load a boundary, compute misclosure in plain language (verdict, axis bias, worst leg, class tolerance), apply Bowditch adjustment as an undoable document push.
+* One-click lodgement package: LandXML + provenance JSON + beacon/traverse CSV schedules + Form 4 SVG in a single ZIP with a manifest.
+
+### 12. OSINT Ground Context (Open-Source Intelligence)
+* **Overpass connector:** query OpenStreetMap around the working extent (document bbox reprojected to WGS84, padding radius 1–25 km, 1°-per-axis area cap) for five feature presets — buildings, roads & tracks, watercourses, land use, named places (buildings/water/landuse also select their multipolygon relations). Deterministic query builder, `out geom` inline parsing, and endpoint failover (overpass-api.de → kumi mirror) with a 30 s timeout.
+* **Multipolygon assembly:** OSM relations (the mapping form of land use blocks, water bodies and estates) assemble into real polygon geometry with holes — member ways chain into closed rings by exact endpoint matching, role-less members classify by containment, holes attach to their smallest containing outer, and rings normalize to RFC 7946 orientation. Anything that cannot be closed from the data is skipped and counted; member ways of assembled relations are consumed instead of duplicating as standalone features.
+* **Import parity:** OSM features land as coded survey vertices (`place/building/highway/waterway/landuse` tag priority, names carried into descriptions, bounded 14-tag attribute subset, stable `OSM-n<id>`/`-w<id>-v<n>`/`-r<id>-v<n>` ids) and are reprojected from WGS84 into the **active** working CRS — the canvas, attribute table, MCDA, and composer treat them like any imported layer. A 10.4 × 10.4 km Nairobi pull (~20,000 features → ~149k vertices) runs the full pipeline in ~2.5 s.
+* **Sentinel-2 epoch change screens:** pixel-difference two annual EOX s2cloudless mosaics (2017–2024, key-free, CORS-open) over the query scope. Epochs are radiometrically normalized by luma histogram matching before differencing (a live Nairobi 2018-vs-2024 screen dropped from 98.8% saturated to 25.2% flagged cells); changed pixels aggregate into measurable ~300 m cells that flag at a chosen ratio. Results land as a summary strip, a grayscale/red preview whose tint matches the stats exactly, a flagged-cell CSV schedule, and a GeoJSON grid carrying the license and method metadata — screening evidence to verify against the imagery pair, never a determination.
+* **Active-fire watchlists (NASA FIRMS):** standing VIIRS (375 m, S-NPP/NOAA-20/NOAA-21) and MODIS (1 km) thermal-anomaly monitors over any saved scope, with a 1–10-day look-back per check and a free local MAP_KEY. Deterministic alert ids (FNV-1a over source|position|acquisition) make every check an exact set-difference against the persisted seen-ring — the panel badges “+N new” since the last look. Detections import as coded points carrying acquisition time, confidence and FRP; watchlists and seen-alert rings persist in the browser.
+* **Regional terrain (Copernicus DEM GLO-30):** one-click 30 m elevation grid around the job through the Planetary Computer Data API crop endpoint (open CORS, no credentials): uncompressed float32 GeoTIFFs decoded in-browser (dependency-free reader), per-tile crops mosaicked into one WGS84 grid, query window padded to ≥ 3 km and resampling disclosed when the pixel cap bites. The Regional Terrain panel reports elevation statistics, Horn slope distribution, an along-axis terrain profile, and 20 m marching-squares contours with the document extent overlaid — regional raster context, never a statutory elevation source.
+* **Place locate (Nominatim):** forward geocoding with a client-side 1 request/second floor (OSMF policy); a result reframes the 2D canvas to the combined document + place extent (1.6 km floor, 1:500 cap) with an amber focus marker, so the place is always seen relative to the job. Each search lands in the provenance registry.
+* **Jurisdictional context (geoBoundaries):** ADM0/1/2 administrative geometry for any ISO-3 country, metadata license + year recorded verbatim, geometry fetched CORS-direct (GitHub LFS media host with published-URL fallback) and clipped at ring level — a county containing the job is kept whole rather than dropped by vertex filtering. Imports as boundary-category coded vertices with full clipped/truncated disclosure.
+* **Honesty contract:** relations assemble completely or are skipped with the reason counted (missing member geometry, unclosable rings) — a partial geometry is never invented; orphan inner rings are excluded and disclosed; unresolved ways are disclosed; OSM, Sentinel-2 screens, fire detections, DEM rasters and open boundaries are labeled *indicative context — NOT survey-grade* in the UI, the import notes, and every provenance graph.
+* **Chain of custody:** every fetch — Overpass, s2cloudless epochs, FIRMS windows, GLO-30 tiles, Nominatim searches, boundary downloads — is recorded in a session provenance registry (service, endpoint, license, attribution, timestamp, feature count, scope) that flows into the provenance graph as `src:external-*` nodes — embedded in GeoJSON, LandXML, GeoPackage, and lodgement exports.
+* **Open basemaps:** Sentinel-2 cloudless mosaic (EOX, modified Copernicus data, ~10 m/px) and OpenTopoMap (OSM+SRTM, CC-BY-SA) join OSM and Esri imagery as XYZ basemaps with persistent offline caching and on-canvas attribution.
 
 ---
 
 ## 1-Click Statutory Deliverables Export
 
 * **Official Form 4 Statutory Deed Plan (Mutation Sheet)**: Formatted with official survey border, title block, coordinate graticule grid, true north arrow, metric scale bar, and Beacon Coordinate Schedule Table.
-* **Regional Planning Atlas**: Pre-composed decision dossier with executive KPI cards, suitability choropleth, hazard vulnerability matrix, and municipal approval blocks.
-* **AutoCAD DXF R2018**: Layered CAD drawing (`BOUNDARIES`, `CONTOURS`, `BEACONS`, `BUFFERS`).
-* **Standards-Compliant GeoJSON**: RFC 7946 with CRS header and dynamic attribute properties.
+* **Regional Planning Atlas**: Pre-composed decision dossier with executive KPI cards, suitability choropleth, hazard vulnerability matrix, and municipal approval blocks—every KPI computed from live pipeline state, with a method-and-limitations disclosure on the sheet.
+* **GeoPackage (OGC)**: Conformant write path (application id, contents, geometry columns) for mr_beacons, mr_vectors, mr_boundary, and mr_provenance attribute tables.
+* **Lodgement ZIP**: LandXML + provenance + CSV schedules + Form 4 sheet in one bundle with a manifest.
+* **AutoCAD DXF R2018**: Layered CAD drawing (`BOUNDARIES`, `CONTOURS`, `BEACONS`, `BUFFERS` as closed LWPOLYLINE rings).
+* **Standards-Compliant GeoJSON**: RFC 7946 with CRS header, dynamic attribute properties, embedded provenance, and corridor Polygon features.
 * **LandXML 1.2 Digital Cadastre**: National land portal digital lodgement schema.
 * **Attribute Table CSV**: Full coordinate mutation schedule with custom properties.
 
@@ -94,23 +138,21 @@ MetaRDU GIS Studio is a high-performance, offline-capable geospatial workstation
 
 ## Test Suite & Verification
 
-The workstation includes automated unit tests verifying geodetic accuracy, parser robustness, and mathematical precision:
+Twenty-eight test suites verify geodetic accuracy, parser robustness, mathematical precision, spatial-index parity against brute force, Shapefile byte roundtrips, GeoPackage writer conformance, WKT CRS parsing, EWKB reading, provenance integrity (including OSINT chain of custody), CRDT convergence, GEOS-parity corridor geometry, atlas cartography, and the OSINT surface (Overpass query determinism and failover plus multipolygon ring assembly, Nominatim parsing and rate discipline, geoBoundaries clipping and URL failover, Sentinel-2 tile planning and radiometric normalization, FIRMS CSV parsing and watchlist diffing, GLO-30 GeoTIFF decoding against byte-exact fixtures, and DEM analysis against analytic ramps):
 
 ```bash
-# Run all test suites
-npx tsx tests/crs.test.ts
-npx tsx tests/parser-calculator.test.ts
-npx tsx tests/cogo-traverse.test.ts
-npx tsx tests/project.test.ts
+# Run all 28 test suites
+npm test
 
-# Production build
+# Performance benchmarks (hard budgets, CI-exitable)
+npm run bench
+
+# Type check + production build
+npx tsc --noEmit
 npm run build
 ```
 
-* `tests/crs.test.ts`: Round-trip geodetic datum transforms verified to $< 1$ mm precision.
-* `tests/parser-calculator.test.ts`: CSV attribute retention, expression evaluation, and roundtrip serialization verified.
-* `tests/cogo-traverse.test.ts`: COGO forward/inverse, ray intersections, Bowditch adjustment, and topology snapping verified.
-* `tests/project.test.ts`: Complete `.metardu.json` project snapshot and restore verified.
+Corridor buffers are validated against reference polygons generated with **GEOS** (shapely — the engine behind QGIS/PostGIS) over six deterministic fixtures at 15 m/30 m widths: area within 0.5 %, boundary agreement within 0.10 m both ways, ring simplicity enforced. All benchmark budgets honoured at head: 50k-point pipeline ≈ 1.2 s, MCDA warm re-evaluation ≈ 190 ms, undo/redo 1,000 ops ≈ 0.5 ms.
 
 ---
 
@@ -139,9 +181,10 @@ Open `http://localhost:5173/` in your browser.
 
 ## Technology Stack
 
-* **UI & Workstation Architecture**: React 19, TypeScript 5.7, Tailwind CSS v4, Lucide Icons
-* **Geodesy & Projections**: `proj4`, EGM2008 Geoid Model, Vincenty Geodesy
-* **Computational Geometry**: Delaunay Triangulation, Marching Squares, Bowyer-Watson, Bowditch Least-Squares
+* **UI & Workstation Architecture**: React 19, TypeScript 5.7, Tailwind CSS v4, Lucide Icons, IBM Plex Sans/Mono, Web Workers
+* **Geodesy & Projections**: `proj4`, dependency-free ESRI WKT parser, EGM2008 Geoid Model (official NGA grid), Vincenty Geodesy
+* **Computational Geometry**: Delaunay triangulation (`delaunator` sweep-hull), Marching Squares, uniform-grid spatial indexing, Bowditch Least-Squares, GEOS-parity corridor joins
+* **Data Interchange**: sql.js (GeoPackage read/write), dBASE III parser, EWKB (PostGIS), store+CRC-32 ZIP writer
 * **Build System**: Vite 6, Rolldown
 
 ---

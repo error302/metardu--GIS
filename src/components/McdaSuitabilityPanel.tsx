@@ -1,12 +1,43 @@
-import React, { useState } from "react";
-import { Sliders, CheckCircle2, AlertTriangle, ShieldAlert, BarChart3 } from "lucide-react";
+import React, { useMemo, useState } from "react";
 import { PipelineResult, McdaWeights } from "../types/spatial";
-import { DEFAULT_MCDA_WEIGHTS, evaluateSuitabilityGrid } from "../core/mcda-suitability";
+import {
+  DEFAULT_MCDA_WEIGHTS,
+  evaluateSuitabilityGrid,
+  buildSuitabilityIndexContext,
+} from "../core/mcda-suitability";
 
 interface McdaSuitabilityPanelProps {
   result: PipelineResult;
   onUpdateSuitability: (newSuitability: any) => void;
 }
+
+const WeightSlider: React.FC<{
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  display: string;
+  hint: string;
+  onChange: (v: number) => void;
+}> = ({ label, value, min, max, step, display, hint, onChange }) => (
+  <div className="space-y-1.5 min-w-0">
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="text-[12px] text-ink-2">{label}</span>
+      <span className="tnum text-[12px] text-ink whitespace-nowrap">{display}</span>
+    </div>
+    <input
+      type="range"
+      min={min}
+      max={max}
+      step={step}
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+      className="w-full h-1 bg-line rounded-full appearance-none cursor-pointer accent-[#d9a441]"
+    />
+    <span className="text-[10px] text-ink-3 block leading-relaxed">{hint}</span>
+  </div>
+);
 
 export const McdaSuitabilityPanel: React.FC<McdaSuitabilityPanelProps> = ({
   result,
@@ -14,10 +45,17 @@ export const McdaSuitabilityPanel: React.FC<McdaSuitabilityPanelProps> = ({
 }) => {
   const [weights, setWeights] = useState<McdaWeights>(DEFAULT_MCDA_WEIGHTS);
 
+  // Indexes amortized per terrain/feature snapshot — weight-slider drags only
+  // re-evaluate cells, never rebuild spatial indexes.
+  const suitabilityContext = useMemo(
+    () => buildSuitabilityIndexContext(result.tin, result.vectors),
+    [result.tin, result.vectors]
+  );
+
   const handleWeightChange = (key: keyof McdaWeights, val: number) => {
     const updated = { ...weights, [key]: val };
     setWeights(updated);
-    const newCells = evaluateSuitabilityGrid(result.tin, result.vectors, updated, 20);
+    const newCells = evaluateSuitabilityGrid(result.tin, result.vectors, updated, 20, suitabilityContext);
     onUpdateSuitability(newCells);
   };
 
@@ -32,147 +70,125 @@ export const McdaSuitabilityPanel: React.FC<McdaSuitabilityPanelProps> = ({
   const buildableHa = Number(((optimal + suitable) / totalCells * totalAreaHa).toFixed(2));
   const restrictedHa = Number(((restricted + hazard) / totalCells * totalAreaHa).toFixed(2));
 
+  const classRows = [
+    { label: "Optimal", cells: optimal, swatch: "#6fb07c" },
+    { label: "Suitable", cells: suitable, swatch: "#8ec498" },
+    { label: "Moderate", cells: moderate, swatch: "#d9a441" },
+    { label: "Restricted", cells: restricted, swatch: "#d97b7b" },
+    { label: "Hazard", cells: hazard, swatch: "#a04a4a" },
+  ];
+
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6 text-slate-100 overflow-y-auto h-[calc(100vh-125px)]">
-      {/* Header */}
-      <div className="border-b border-slate-800 pb-4">
-        <div className="flex items-center gap-2">
-          <Sliders className="w-5 h-5 text-blue-400" />
-          <h2 className="text-lg font-bold tracking-tight text-white font-['Plus_Jakarta_Sans']">
-            SETTLEMENT SUITABILITY (MCDA) — GENERIC
+    <div className="h-full overflow-y-auto">
+      <div className="max-w-6xl mx-auto p-6 space-y-5">
+        {/* Section head */}
+        <div className="pb-3 border-b border-line">
+          <h2 className="text-[15px] font-semibold text-ink tracking-tight">
+            Settlement Suitability — Multi-Criteria Analysis
           </h2>
+          <p className="text-[12px] text-ink-3 mt-0.5">
+            Weighted overlay of terrain slope, riparian setbacks and road proximity on a 20 × 20 evaluation grid.
+          </p>
         </div>
-        <p className="text-xs text-slate-400 mt-1">
-          Dynamic Multi-Criteria Decision Analysis evaluating terrain slope gradients, statutory riparian river setbacks, and transport proximity.
+
+        {/* Class distribution — readout strip + in-cell proportion bars */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-px bg-line border border-line rounded-[3px] overflow-hidden">
+          {classRows.map((row) => {
+            const pct = Math.round((row.cells / totalCells) * 100);
+            return (
+              <div key={row.label} className="bg-panel p-3.5">
+                <div className="flex items-center gap-1.5 mb-1.5">
+                  <span
+                    className="w-2 h-2 rounded-[2px] shrink-0"
+                    style={{ backgroundColor: row.swatch }}
+                  />
+                  <span className="ui-label truncate">{row.label}</span>
+                </div>
+                <div className="ui-stat-value">{pct}<span className="ui-stat-unit">%</span></div>
+                <div className="mt-2 h-[3px] bg-line rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full"
+                    style={{ width: `${pct}%`, backgroundColor: row.swatch }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <p className="text-[11px] text-ink-3">
+          Net buildable envelope <span className="tnum text-ink-2">{buildableHa} ha</span> · restricted / hazard excision{" "}
+          <span className="tnum text-ink-2">{restrictedHa} ha</span> of {totalAreaHa} ha total.
         </p>
-      </div>
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-          <span className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider block">PRIME HIGH YIELD</span>
-          <div className="text-2xl font-extrabold text-white mt-1 font-mono">{Math.round((optimal / totalCells) * 100)}%</div>
-          <span className="text-xs text-slate-400 mt-0.5 block">{buildableHa} Ha Net Usable</span>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-          <span className="text-[11px] font-bold text-sky-400 uppercase tracking-wider block">SUITABLE (STANDARD GRADING)</span>
-          <div className="text-2xl font-extrabold text-white mt-1 font-mono">{Math.round((suitable / totalCells) * 100)}%</div>
-          <span className="text-xs text-slate-400 mt-0.5 block">Slope &lt; 15%</span>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-          <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider block">MODERATE CAUTION</span>
-          <div className="text-2xl font-extrabold text-white mt-1 font-mono">{Math.round((moderate / totalCells) * 100)}%</div>
-          <span className="text-xs text-slate-400 mt-0.5 block">Requires Retaining Walls</span>
-        </div>
-
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl">
-          <span className="text-[11px] font-bold text-red-400 uppercase tracking-wider block">RESTRICTED &amp; HAZARD</span>
-          <div className="text-2xl font-extrabold text-white mt-1 font-mono">{Math.round(((restricted + hazard) / totalCells) * 100)}%</div>
-          <span className="text-xs text-slate-400 mt-0.5 block">{restrictedHa} Ha Setback Excision</span>
-        </div>
-      </div>
-
-      {/* Interactive Criteria Sliders */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-        <h3 className="text-sm font-bold text-white tracking-wide flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-blue-400" />
-          <span>MULTI-CRITERIA DECISION WEIGHTS</span>
-        </h3>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
-          {/* Slider 1: Slope */}
-          <div>
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-slate-300 font-medium">Terrain Slope Weight</span>
-              <span className="font-mono text-blue-400 font-bold">{weights.slopeWeight}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
+        {/* Weights */}
+        <section className="ui-card">
+          <div className="ui-panel-head">
+            <span className="ui-label">Decision criteria weights</span>
+            <span className="text-[11px] text-ink-3 tnum">live re-evaluation</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5 p-4">
+            <WeightSlider
+              label="Terrain slope weight"
               value={weights.slopeWeight}
-              onChange={(e) => handleWeightChange("slopeWeight", Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              min={0} max={100} step={1}
+              display={`${weights.slopeWeight} %`}
+              hint="Penalizes steep slopes and escarpment faces"
+              onChange={(v) => handleWeightChange("slopeWeight", v)}
             />
-            <span className="text-[10px] text-slate-500">Penalizes steep slopes and escarpment faces</span>
-          </div>
-
-          {/* Slider 2: Road Accessibility */}
-          <div>
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-slate-300 font-medium">Road Accessibility Weight</span>
-              <span className="font-mono text-blue-400 font-bold">{weights.roadAccessWeight}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
+            <WeightSlider
+              label="Road accessibility weight"
               value={weights.roadAccessWeight}
-              onChange={(e) => handleWeightChange("roadAccessWeight", Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              min={0} max={100} step={1}
+              display={`${weights.roadAccessWeight} %`}
+              hint="Prioritizes parcels within 250 m of access roads"
+              onChange={(v) => handleWeightChange("roadAccessWeight", v)}
             />
-            <span className="text-[10px] text-slate-500">Prioritizes settlement parcels within 250m of access roads</span>
-          </div>
-
-          {/* Slider 3: Water Riparian Buffer */}
-          <div>
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-slate-300 font-medium">Riparian Conservation Setback</span>
-              <span className="font-mono text-cyan-400 font-bold">{weights.riparianBufferM} metres</span>
-            </div>
-            <input
-              type="range"
-              min="10"
-              max="100"
-              step="5"
+            <WeightSlider
+              label="Riparian conservation setback"
               value={weights.riparianBufferM}
-              onChange={(e) => handleWeightChange("riparianBufferM", Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+              min={10} max={100} step={5}
+              display={`${weights.riparianBufferM} m`}
+              hint="Statutory exclusion corridor along the stream channel"
+              onChange={(v) => handleWeightChange("riparianBufferM", v)}
             />
-            <span className="text-[10px] text-slate-500">Statutory 30m environmental exclusion corridor along streams</span>
-          </div>
-
-          {/* Slider 4: Max Slope Allowed */}
-          <div>
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-slate-300 font-medium">Max Buildable Slope Cutoff</span>
-              <span className="font-mono text-red-400 font-bold">{weights.maxSlopeAllowed}%</span>
-            </div>
-            <input
-              type="range"
-              min="10"
-              max="45"
-              step="1"
+            <WeightSlider
+              label="Maximum buildable slope"
               value={weights.maxSlopeAllowed}
-              onChange={(e) => handleWeightChange("maxSlopeAllowed", Number(e.target.value))}
-              className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-red-400"
+              min={10} max={45} step={1}
+              display={`${weights.maxSlopeAllowed} %`}
+              hint="Slopes above this threshold are classified non-buildable"
+              onChange={(v) => handleWeightChange("maxSlopeAllowed", v)}
             />
-            <span className="text-[10px] text-slate-500">Slopes exceeding threshold are classified as non-buildable hazards</span>
           </div>
-        </div>
-      </div>
+        </section>
 
-      {/* Strategic Decision Matrix */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-        <h3 className="text-sm font-bold text-white tracking-wide mb-3">
-          STRATEGIC PLANNING RECOMMENDATIONS
-        </h3>
-        <ul className="space-y-2 text-xs text-slate-300">
-          <li className="flex items-start gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-            <span><strong>Zone A (Upper Ridge):</strong> Designated for high-density social housing and civic infrastructure (Slope &lt; 5%).</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-            <span><strong>Zone B (Intermediate Terraces):</strong> Requires structural benching and terraced grading prior to building approval.</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <ShieldAlert className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-            <span><strong>Zone C (Riparian Corridor):</strong> Absolute building ban enforced within {weights.riparianBufferM}m buffer of the river channel.</span>
-          </li>
-        </ul>
+        {/* Planning directives */}
+        <section className="ui-card">
+          <div className="ui-panel-head">
+            <span className="ui-label">Planning directives</span>
+          </div>
+          <div className="divide-y divide-line">
+            <div className="px-4 py-3 flex gap-3">
+              <span className="text-[11px] tnum text-ink-3 w-14 shrink-0 pt-0.5">Zone A</span>
+              <p className="text-[12px] text-ink-2 leading-relaxed">
+                Upper ridge (&lt; 5% slope) — designated for higher-density residential and civic infrastructure. No grading remediation required.
+              </p>
+            </div>
+            <div className="px-4 py-3 flex gap-3">
+              <span className="text-[11px] tnum text-ink-3 w-14 shrink-0 pt-0.5">Zone B</span>
+              <p className="text-[12px] text-ink-2 leading-relaxed">
+                Intermediate terraces — structural benching and terraced grading required prior to building approval. Apply moderate caution class.
+              </p>
+            </div>
+            <div className="px-4 py-3 flex gap-3">
+              <span className="text-[11px] tnum text-ink-3 w-14 shrink-0 pt-0.5">Zone C</span>
+              <p className="text-[12px] text-ink-2 leading-relaxed">
+                Riparian corridor — building prohibited within {weights.riparianBufferM} m of the channel per environmental statute.
+              </p>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
   );

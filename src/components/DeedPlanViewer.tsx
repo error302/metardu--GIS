@@ -1,14 +1,16 @@
-import React, { useMemo } from "react";
-import { Download, Printer, FileText } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { Download, Printer, FileText, ZoomIn, ZoomOut } from "lucide-react";
 import { PipelineResult } from "../types/spatial";
-import { generateDeedPlanSvg } from "../exporters/deed-plan-svg";
+import { renderTemplate } from "../core/composer/render";
+import { form4Preset } from "../core/composer/presets";
 
 interface DeedPlanViewerProps {
   result: PipelineResult;
 }
 
 export const DeedPlanViewer: React.FC<DeedPlanViewerProps> = ({ result }) => {
-  const svgXml = useMemo(() => generateDeedPlanSvg(result), [result]);
+  const svgXml = useMemo(() => renderTemplate(form4Preset(), result).svg, [result]);
+  const [zoomPct, setZoomPct] = useState(100);
 
   const handleDownloadSvg = () => {
     const blob = new Blob([svgXml], { type: "image/svg+xml" });
@@ -43,41 +45,62 @@ export const DeedPlanViewer: React.FC<DeedPlanViewerProps> = ({ result }) => {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-125px)] bg-slate-950 text-slate-100">
-      {/* Top Action Ribbon */}
-      <div className="bg-slate-900 border-b border-slate-800 px-6 py-2.5 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4 text-blue-400" />
-          <span className="font-bold text-xs text-white uppercase tracking-wider font-['Plus_Jakarta_Sans']">
-            STATUTORY SURVEY DEED PLAN (FORM NO. 4) — CADASTRAL MUTATION SHEET
-          </span>
+    <div className="flex flex-col h-full bg-sunken">
+      {/* Preview toolbar */}
+      <div className="h-9 shrink-0 bg-panel border-b border-line px-3 flex items-center gap-3">
+        <div className="flex items-center gap-2 text-ink-2">
+          <FileText className="w-3.5 h-3.5" />
+          <span className="ui-label">Statutory Deed Plan — Form No. 4 · Mutation Sheet</span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handlePrint}
-            className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded-md border border-slate-700 transition cursor-pointer"
-          >
+        <div className="ml-auto flex items-center gap-2">
+          {/* Zoom control */}
+          <div className="flex items-center border border-line-strong rounded-[3px] overflow-hidden h-[26px]">
+            <button
+              className="ui-btn-icon w-7 h-[24px] rounded-none"
+              onClick={() => setZoomPct((z) => Math.max(25, z - 10))}
+              title="Zoom out"
+            >
+              <ZoomOut className="w-3.5 h-3.5" />
+            </button>
+            <span className="tnum text-[11px] text-ink-2 w-11 text-center border-x border-line">
+              {zoomPct}%
+            </span>
+            <button
+              className="ui-btn-icon w-7 h-[24px] rounded-none"
+              onClick={() => setZoomPct((z) => Math.min(300, z + 10))}
+              title="Zoom in"
+            >
+              <ZoomIn className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <button onClick={handlePrint} className="ui-btn">
             <Printer className="w-3.5 h-3.5" />
             <span>Print to PDF</span>
           </button>
-          <button
-            onClick={handleDownloadSvg}
-            className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-3 py-1.5 rounded-md transition cursor-pointer shadow-md shadow-blue-500/20"
-          >
+          <button onClick={handleDownloadSvg} className="ui-btn-accent">
             <Download className="w-3.5 h-3.5" />
-            <span>Download Vector SVG</span>
+            <span>Download SVG</span>
           </button>
         </div>
       </div>
 
-      {/* SVG Canvas Container */}
-      <div className="flex-1 overflow-auto p-6 flex justify-center items-center bg-[#070A10]">
+      {/* Paper preview — sheet floats on neutral backdrop, scales with zoom */}
+      <div className="flex-1 overflow-auto p-8">
         <div
-          
-          className="shadow-2xl rounded-lg overflow-hidden bg-white max-w-5xl w-full"
-          dangerouslySetInnerHTML={{ __html: svgXml }}
-        />
+          className="mx-auto bg-white shadow-[0_2px_24px_rgba(0,0,0,0.5)] border border-line-strong"
+          style={{ width: `${zoomPct}%`, maxWidth: 1500 }}
+        >
+          {/* The exported SVG carries fixed pixel dimensions; force fluid scaling */}
+          <div
+            className="[&>svg]:w-full [&>svg]:h-auto [&>svg]:block"
+            dangerouslySetInnerHTML={{ __html: svgXml }}
+          />
+        </div>
+        <p className="text-center text-[11px] text-ink-3 mt-3">
+          Preview scaled to fit — exported SVG retains full vector fidelity at print resolution.
+        </p>
       </div>
     </div>
   );

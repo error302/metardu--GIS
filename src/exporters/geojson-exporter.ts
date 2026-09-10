@@ -4,6 +4,7 @@
  */
 
 import { PipelineResult } from "../types/spatial";
+import { buildProvenanceGraph } from "../core/provenance";
 
 export function exportToGeoJson(result: PipelineResult): string {
   const features: any[] = [];
@@ -90,6 +91,27 @@ export function exportToGeoJson(result: PipelineResult): string {
     });
   }
 
+  // Corridor buffers as closed Polygon features (join-resolved rings from
+  // the GEOS-parity engine; rings are already closed, first vertex repeated).
+  for (const buf of result.buffers) {
+    if (buf.polygon.length < 4) continue;
+    features.push({
+      type: "Feature",
+      geometry: {
+        type: "Polygon",
+        coordinates: [buf.polygon.map(([e, n]) => [e, n, 0])],
+      },
+      properties: {
+        id: buf.id,
+        sourceFeatureId: buf.sourceFeatureId,
+        featureName: buf.featureName,
+        reserveWidthM: buf.reserveWidthM,
+        areaSqM: buf.areaSqM,
+        encroachmentDetected: buf.encroachmentDetected,
+      },
+    });
+  }
+
   const featureCollection = {
     type: "FeatureCollection",
     metadata: {
@@ -99,6 +121,8 @@ export function exportToGeoJson(result: PipelineResult): string {
       generator: "MetaRDU GIS Studio Autonomous Workstation",
       timestamp: new Date().toISOString(),
     },
+    // RFC 7946 §6.1 allows foreign members — provenance travels with the data.
+    provenance: buildProvenanceGraph(result),
     features,
   };
 

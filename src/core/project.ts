@@ -15,6 +15,7 @@ import {
 import { LayerItem, DEFAULT_LAYERS } from "./layer-store";
 import { DEFAULT_OFFGRID_PARAMS } from "./energy-catchment";
 import { DEFAULT_MCDA_WEIGHTS } from "./mcda-suitability";
+import { ProvenanceGraph } from "./provenance";
 
 export interface MetarduProject {
   format: "METARDU_GIS_PROJECT";
@@ -27,6 +28,8 @@ export interface MetarduProject {
   layers: LayerItem[];
   offGridParams: OffGridPlannerParams;
   mcdaWeights: McdaWeights;
+  /** Optional machine-readable provenance graph (Phase D) — survives save/load. */
+  provenance?: ProvenanceGraph;
 }
 
 /**
@@ -36,7 +39,8 @@ export function createProjectSnapshot(
   result: PipelineResult,
   layers: LayerItem[] = DEFAULT_LAYERS,
   offGridParams: OffGridPlannerParams = DEFAULT_OFFGRID_PARAMS,
-  mcdaWeights: McdaWeights = DEFAULT_MCDA_WEIGHTS
+  mcdaWeights: McdaWeights = DEFAULT_MCDA_WEIGHTS,
+  provenance?: ProvenanceGraph
 ): MetarduProject {
   return {
     format: "METARDU_GIS_PROJECT",
@@ -49,6 +53,7 @@ export function createProjectSnapshot(
     layers: [...layers],
     offGridParams: { ...offGridParams },
     mcdaWeights: { ...mcdaWeights },
+    provenance,
   };
 }
 
@@ -99,5 +104,9 @@ export function parseProjectFile(jsonStr: string): MetarduProject {
     layers: parsed.layers || DEFAULT_LAYERS,
     offGridParams: parsed.offGridParams || DEFAULT_OFFGRID_PARAMS,
     mcdaWeights: parsed.mcdaWeights || DEFAULT_MCDA_WEIGHTS,
+    provenance:
+      parsed.provenance && parsed.provenance.format === "METARDU_PROVENANCE"
+        ? parsed.provenance
+        : undefined,
   };
 }

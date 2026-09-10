@@ -4,55 +4,137 @@ import {
   ZoomOut,
   Maximize2,
   Layers,
-  Eye,
-  EyeOff,
-  Compass,
-  Sun,
-  Moon,
-  Globe,
   Wrench,
+  MousePointer2,
+  Mountain,
 } from "lucide-react";
-import { PipelineResult } from "../types/spatial";
-import { crsEpsgFromMetadata, toWGS84 } from "../core/crs";
+import { PipelineResult, SurveyPoint } from "../types/spatial";
+import { crsEpsgFromMetadata, toWGS84, fromWGS84 } from "../core/crs";
+import { TILE_PROVIDERS, TileService, tilesForViewport, TileProvider } from "../core/tiles";
+import { probeElevation, DemProbe, DEM_ATTRIBUTION } from "../core/dem";
 import { DEFAULT_LAYERS, LayerItem } from "../core/layer-store";
 import { LayerPanel } from "./LayerPanel";
 import { ToolboxPanel } from "./ToolboxPanel";
+import { CursorReadout } from "./StatusBar";
 
 interface MapCanvas2DProps {
   result: PipelineResult;
   selectedPointIds?: string[];
   onSelectPoint?: (id: string) => void;
+  onCursorReadout?: (c: CursorReadout | null) => void;
+  onScaleChange?: (scaleDenominator: number) => void;
+  /** WGS84 point to center the viewport on (OSINT place search / locate). */
+  focusWgs84?: { lon: number; lat: number; label?: string } | null;
 }
 
-export type BasemapMode = "dark" | "satellite" | "viirs" | "cad";
+export type BasemapMode = "dark" | "osm" | "imagery" | "sentinel2" | "topo" | "viirs" | "cad";
+
+/** Basemaps backed by live XYZ tiles (offline fallback to procedural below). */
+const TILE_BASEMAPS: Partial<Record<BasemapMode, TileProvider>> = {
+  osm: TILE_PROVIDERS.osm,
+  imagery: TILE_PROVIDERS["esri-imagery"],
+  sentinel2: TILE_PROVIDERS["s2-cloudless"],
+  topo: TILE_PROVIDERS.opentopo,
+};
+
+/** Shared tile service — persistent Cache API + LRU + bounded concurrency. */
+const tileService = new TileService();
+
+/* Data palette — mirrors CSS tokens (color belongs to data, never chrome) */
+const C = {
+  boundary: "#6aa1d8",
+  boundaryFill: "rgba(106, 161, 216, 0.07)",
+  beaconBoundary: "#d97b7b",
+  beaconOther: "#6aa1d8",
+  selected: "#d9a441",
+  contourMinor: "#4c4c52",
+  contourMajor: "#c9985b",
+  roadBuffer: "#d99a5b",
+  riparian: "#62bfc3",
+  hazard: "#d97b7b",
+  energy: "#d9c95e",
+  ink: "#e8e8ea",
+  ink2: "#a4a4aa",
+  ink3: "#70707a",
+  chipBg: "rgba(20, 20, 22, 0.85)",
+  chipLine: "#3a3a40",
+};
+
+const BASEMAP_BG: Record<BasemapMode, string> = {
+  dark: "#161619",
+  osm: "#e9e6e2", // light fallback tint for offline Streets mode
+  imagery: "#15181a",
+  sentinel2: "#101413", // muted green-gray while S2 tiles decode
+  topo: "#e8e4da", // warm topo-paper fallback tint
+  viirs: "#0a0a0d",
+  cad: "#f7f7f5",
+};
+
+interface PlacedRect {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
 
 export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   result,
   selectedPointIds = [],
+  onSelectPoint,
+  onCursorReadout,
+  onScaleChange,
+  focusWgs84 = null,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Renderer v2: static-scene cache (basemap..energy layers) blitted under the
+  // dynamic pass (points, labels, furniture) so selection/hover redraws never
+  // re-stroke the heavy layers, and pan/zoom only re-renders them once.
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const staticSigRef = useRef("");
+  const staticResultRef = useRef<PipelineResult | null>(null);
+  const [resizeTick, setResizeTick] = useState(0);
+
+  // Re-render on element resize (canvas backing store is sized in the loop)
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setResizeTick((t) => t + 1));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Viewport transformation
   const [zoom, setZoom] = useState(1.0);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [cursorCoord, setCursorCoord] = useState({ easting: 0, northing: 0, elevation: 0 });
+  const [, setCursorTick] = useState(0); // triggers cursor readout reporting
 
   const activeEpsg = useMemo(() => crsEpsgFromMetadata(result.metadata.crs), [result.metadata.crs]);
-
-  const [cursorLon, cursorLat] = useMemo(() => {
-    if (!cursorCoord.easting && !cursorCoord.northing) return [0, 0];
-    try {
-      return toWGS84(activeEpsg, cursorCoord.easting, cursorCoord.northing);
-    } catch {
-      return [0, 0];
-    }
-  }, [activeEpsg, cursorCoord.easting, cursorCoord.northing]);
 
   // Basemap & Layer toggles
   const [basemap, setBasemap] = useState<BasemapMode>("dark");
   const [layerItems, setLayerItems] = useState<LayerItem[]>(DEFAULT_LAYERS);
+
+  // Tile epoch — bumped (rAF-coalesced) when any requested tile decodes, so
+  // the static scene re-renders with the basemap tiles that just arrived.
+  const [tilesEpoch, setTilesEpoch] = useState(0);
+  const tilesEpochRef = useRef(0);
+  const tilesEpochRaf = useRef<number | null>(null);
+  useEffect(() => {
+    const unsub = tileService.onChange(() => {
+      tilesEpochRef.current += 1;
+      if (tilesEpochRaf.current !== null) return;
+      tilesEpochRaf.current = requestAnimationFrame(() => {
+        tilesEpochRaf.current = null;
+        setTilesEpoch(tilesEpochRef.current);
+      });
+    });
+    return () => {
+      unsub();
+      if (tilesEpochRaf.current !== null) cancelAnimationFrame(tilesEpochRaf.current);
+    };
+  }, []);
 
   const layerMap = useMemo(() => {
     const map: Record<string, LayerItem> = {};
@@ -78,8 +160,38 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     [layerMap]
   );
 
+  const isCad = basemap === "cad";
+  const tileProvider = TILE_BASEMAPS[basemap] ?? null;
+  // Light cartographic backdrops (Streets, Topo) flip graticule/label ink
+  const isOsmLight = basemap === "osm" || basemap === "topo";
+
+  // Stable signature of layer visibility for the static-cache key
+  const layersSig = useMemo(() => JSON.stringify(layers), [layers]);
+
   const [showLayerPanel, setShowLayerPanel] = useState(false);
   const [showToolbox, setShowToolbox] = useState(false);
+
+  // Regional DEM probe (Terrarium tiles) — elevation context beyond the
+  // surveyed TIN footprint. Never used for statutory heights.
+  interface ProbeState {
+    worldE: number;
+    worldN: number;
+    lat: number;
+    lon: number;
+    status: "loading" | "done" | "error";
+    dem?: DemProbe;
+  }
+  const [probeMode, setProbeMode] = useState(false);
+  const [probe, setProbe] = useState<ProbeState | null>(null);
+
+  useEffect(() => {
+    if (!probeMode) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setProbeMode(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [probeMode]);
 
   // Calculate project bounds
   const bounds = useMemo(() => {
@@ -99,15 +211,15 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   // Fit to extents
   const handleFitBounds = () => {
     if (!canvasRef.current) return;
-    const cw = canvasRef.current.width;
-    const ch = canvasRef.current.height;
+    const cw = canvasRef.current.getBoundingClientRect().width;
+    const ch = canvasRef.current.getBoundingClientRect().height;
     const spanE = bounds.maxE - bounds.minE || 100;
     const spanN = bounds.maxN - bounds.minN || 100;
 
-    const pad = 1.3;
+    const pad = 1.35;
     const scaleX = cw / (spanE * pad);
     const scaleY = ch / (spanN * pad);
-    const fitScale = Math.min(scaleX, scaleY);
+    const fitScale = Math.max(scaleX, scaleY) === 0 ? 1 : Math.min(scaleX, scaleY);
 
     setZoom(fitScale);
     setPan({
@@ -120,140 +232,259 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     handleFitBounds();
   }, [bounds]);
 
+  // Locate — frame BOTH the focus point and the document, so the searched
+  // place is always seen in context of the job (never loses the survey).
+  // The view is at least a ~1.6 km-wide window and never zooms past 1:500.
+  const focusRef = useRef<{ lon: number; lat: number; label?: string } | null>(null);
+  useEffect(() => {
+    focusRef.current = focusWgs84;
+    if (!focusWgs84 || !canvasRef.current) return;
+    const [e, n] = fromWGS84(activeEpsg, focusWgs84.lon, focusWgs84.lat);
+    if (!Number.isFinite(e) || !Number.isFinite(n)) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const cw = rect.width || 900;
+    const ch = rect.height || 600;
+
+    // Combined extent: document bounds ∪ focus point
+    const minE = Math.min(bounds.minE, e);
+    const maxE = Math.max(bounds.maxE, e);
+    const minN = Math.min(bounds.minN, n);
+    const maxN = Math.max(bounds.maxN, n);
+    const spanE = Math.max(maxE - minE, 1600); // floor: ~1.6 km window
+    const spanN = Math.max(maxN - minN, 1600);
+
+    const pad = 1.35;
+    const z = Math.min(cw / (spanE * pad), ch / (spanN * pad));
+    const zoomCapped = Math.min(Math.max(z, cw / (1600 * pad * 4)), 7.55); // ≤ ~1:500 at 96 dpi
+    setZoom(zoomCapped);
+    setPan({
+      x: cw / 2 - ((minE + maxE) / 2) * zoomCapped,
+      y: ch / 2 + ((minN + maxN) / 2) * zoomCapped,
+    });
+  }, [focusWgs84]);
+
+  // Report view scale to the global status bar (96 dpi assumption)
+  useEffect(() => {
+    onScaleChange?.(3779.5 / Math.max(zoom, 1e-6));
+  }, [zoom, onScaleChange]);
+
   // Transform helpers
   const toScreenX = (e: number) => e * zoom + pan.x;
   const toScreenY = (n: number) => -n * zoom + pan.y;
   const toWorldE = (sx: number) => (sx - pan.x) / zoom;
   const toWorldN = (sy: number) => -(sy - pan.y) / zoom;
 
-  // Render Loop
+  /* ---------------- Render loop (v2: static cache + viewport culling + LOD) ---------------- */
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Handle high DPI
     const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * window.devicePixelRatio;
-    canvas.height = rect.height * window.devicePixelRatio;
-    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    const dpr = window.devicePixelRatio || 1;
+    const targetW = Math.max(1, Math.round(rect.width * dpr));
+    const targetH = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const w = rect.width;
     const h = rect.height;
 
-    // 1. Draw Basemap Background
-    if (basemap === "dark") {
-      ctx.fillStyle = "#0B0F17";
-      ctx.fillRect(0, 0, w, h);
-    } else if (basemap === "cad") {
-      ctx.fillStyle = "#F8FAFC";
-      ctx.fillRect(0, 0, w, h);
-    } else if (basemap === "satellite") {
-      // Simulated satellite aerial tone
-      ctx.fillStyle = "#111827";
-      ctx.fillRect(0, 0, w, h);
-      ctx.fillStyle = "#064E3B22";
-      ctx.fillRect(0, 0, w, h);
-    } else if (basemap === "viirs") {
-      // Night Lights Overlay (VIIRS-inspired, generic ref — see methodology-registry)
-      ctx.fillStyle = "#030712";
-      ctx.fillRect(0, 0, w, h);
-      // Soft ambient light glow
-      const grad = ctx.createRadialGradient(w / 2, h / 2, 20, w / 2, h / 2, w / 1.5);
-      grad.addColorStop(0, "#F59E0B15");
-      grad.addColorStop(1, "#00000000");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, w, h);
-    }
-
-    // 2. Coordinate Graticule Grid (+)
-    const graticuleStep = Math.max(20, Math.pow(10, Math.floor(Math.log10(200 / zoom))));
+    // Visible world window — shared by the static and dynamic passes.
     const minVisE = toWorldE(0);
     const maxVisE = toWorldE(w);
     const minVisN = toWorldN(h);
     const maxVisN = toWorldN(0);
+    const viewPadWorld = 80 / Math.max(zoom, 1e-6); // slack for edge-straddling strokes
+    const inView = (e: number, n: number) =>
+      e >= minVisE - viewPadWorld &&
+      e <= maxVisE + viewPadWorld &&
+      n >= minVisN - viewPadWorld &&
+      n <= maxVisN + viewPadWorld;
+
+    /* ---- Tile basemap view geometry (lon/lat bbox + ground meters/px) ---- */
+    let tileSpans: ReturnType<typeof tilesForViewport> = [];
+    let tileStats = { ready: 0, drawn: 0 };
+    if (tileProvider) {
+      try {
+        // Ground meters per screen pixel — measured, so it is CRS-independent
+        // (works for projected meters and for geographic degrees alike).
+        const wA = toWorldE(w / 2 - 50);
+        const wB = toWorldE(w / 2 + 50);
+        const midN = toWorldN(h / 2);
+        const [lonA, latA] = toWGS84(activeEpsg, wA, midN);
+        const [lonB, latB] = toWGS84(activeEpsg, wB, midN);
+        const dLat = ((latB - latA) * Math.PI) / 180;
+        const dLon = ((lonB - lonA) * Math.PI) / 180;
+        const a = Math.sin(dLat / 2) ** 2 + Math.cos((latA * Math.PI) / 180) * Math.cos((latB * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+        const meters = 2 * 6371008.8 * Math.asin(Math.min(1, Math.sqrt(a)));
+        const mpp = Math.abs(meters) / 100 || 1;
+        // Screen-corner lon/lat bbox (clamped to Web-Mercator latitude range)
+        const corners: [number, number][] = [
+          [toWorldE(0), toWorldN(0)],
+          [toWorldE(w), toWorldN(0)],
+          [toWorldE(0), toWorldN(h)],
+          [toWorldE(w), toWorldN(h)],
+        ];
+        let lonMin = Infinity, latMin = Infinity, lonMax = -Infinity, latMax = -Infinity;
+        for (const [e, n] of corners) {
+          const [lon, lat] = toWGS84(activeEpsg, e, n);
+          lonMin = Math.min(lonMin, lon); lonMax = Math.max(lonMax, lon);
+          latMin = Math.max(-85, Math.min(85, Math.min(latMin, lat)));
+          latMax = Math.max(-85, Math.min(85, Math.max(latMax, lat)));
+        }
+        tileSpans = tilesForViewport(tileProvider, mpp, [lonMin, latMin, lonMax, latMax]);
+      } catch {
+        tileSpans = [];
+      }
+    }
+
+    /* ---- Static scene: sections 1–10 depend only on view/basemap/layers/result ---- */
+    function renderStatic(sctx: CanvasRenderingContext2D, sw: number, sh: number) {
+      const ctx = sctx;
+
+      /* 1. Basemap — procedural fill first (also the offline fallback), then
+            live XYZ tiles drawn on top where they have decoded. */
+      ctx.fillStyle = BASEMAP_BG[basemap];
+      ctx.fillRect(0, 0, sw, sh);
+      if (basemap === "imagery") {
+        ctx.fillStyle = "rgba(38, 66, 48, 0.16)";
+        ctx.fillRect(0, 0, sw, sh);
+      } else if (basemap === "viirs") {
+        const grad = ctx.createRadialGradient(sw / 2, sh / 2, 20, sw / 2, sh / 2, sw / 1.4);
+        grad.addColorStop(0, "rgba(217, 164, 65, 0.07)");
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, sw, sh);
+      }
+
+      if (tileProvider && tileSpans.length > 0) {
+        ctx.imageSmoothingEnabled = true;
+        for (const span of tileSpans) {
+          const img = tileService.request(tileProvider, span.z, span.x, span.y);
+          if (!img) continue; // in-flight/failed — procedural shows through
+          // Reproject the tile's NW/SE corners into the working CRS and draw
+          // into that screen rect. Over one 256px tile the residual CRS
+          // curvature is sub-pixel at survey scales.
+          const [eNW, nNW] = fromWGS84(activeEpsg, span.nw.lon, span.nw.lat);
+          const [eSE, nSE] = fromWGS84(activeEpsg, span.se.lon, span.se.lat);
+          const sx = toScreenX(eNW);
+          const sy = toScreenY(nNW);
+          const tw = toScreenX(eSE) - sx;
+          const th = toScreenY(nSE) - sy;
+          if (tw <= 0 || th <= 0 || tw > sw * 8 || th > sh * 8) continue;
+          ctx.drawImage(img, sx, sy, tw, th);
+          tileStats.drawn++;
+        }
+        tileStats.ready = tileStats.drawn;
+      }
+
+      /* 2. Graticule — powers-of-ten grid, mono labels with collision spacing */
+      const graticuleStep = Math.max(10, Math.pow(10, Math.floor(Math.log10(160 / zoom))));
 
     ctx.lineWidth = 0.5;
-    ctx.strokeStyle = basemap === "cad" ? "#E2E8F0" : "#1E293B";
-    ctx.fillStyle = basemap === "cad" ? "#64748B" : "#475569";
-    ctx.font = "9px monospace";
+    ctx.strokeStyle = isCad
+      ? "rgba(0,0,0,0.08)"
+      : isOsmLight
+        ? "rgba(40,40,46,0.20)"
+        : "rgba(255,255,255,0.045)";
+    ctx.font = "9px 'IBM Plex Mono', monospace";
+    ctx.fillStyle = isCad ? "#8a8a90" : isOsmLight ? "#52525a" : "#5b5b62";
 
-    const startE = Math.floor(minVisE / graticuleStep) * graticuleStep;
-    for (let e = startE; e <= maxVisE; e += graticuleStep) {
-      const sx = toScreenX(e);
+    // Draw edge labels only when they have generous breathing room
+    let lastELabelX = -Infinity;
+    for (let e = Math.floor(minVisE / graticuleStep) * graticuleStep; e <= maxVisE; e += graticuleStep) {
+      const sx = Math.round(toScreenX(e)) + 0.5;
       ctx.beginPath();
       ctx.moveTo(sx, 0);
       ctx.lineTo(sx, h);
       ctx.stroke();
-      ctx.fillText(`${e.toLocaleString()}m E`, sx + 4, h - 8);
+      if (sx - lastELabelX >= 90) {
+        ctx.textAlign = "left";
+        ctx.fillText(`${e.toLocaleString()} E`, sx + 4, h - 22);
+        lastELabelX = sx + 4 + ctx.measureText(`${e.toLocaleString()} E`).width;
+      }
     }
 
-    const startN = Math.floor(minVisN / graticuleStep) * graticuleStep;
-    for (let n = startN; n <= maxVisN; n += graticuleStep) {
-      const sy = toScreenY(n);
+    let lastNLabelY = -Infinity;
+    for (let n = Math.floor(minVisN / graticuleStep) * graticuleStep; n <= maxVisN; n += graticuleStep) {
+      const sy = Math.round(toScreenY(n)) + 0.5;
       ctx.beginPath();
       ctx.moveTo(0, sy);
       ctx.lineTo(w, sy);
       ctx.stroke();
-      ctx.fillText(`${n.toLocaleString()}m N`, 8, sy - 4);
+      if (lastNLabelY === -Infinity || sy - lastNLabelY >= 18) {
+        ctx.textAlign = "left";
+        ctx.fillText(`${n.toLocaleString()} N`, 38, sy - 4); // clear of the tool rail
+        lastNLabelY = sy;
+      }
     }
+    ctx.textAlign = "center";
 
-    // 3. MCDA Suitability Cells (Heatmap overlay)
+    /* 3. MCDA suitability cells (viewport-culled) */
     if (layers.suitability && result.suitability.length > 0) {
+      const cellPx = Math.max(8, 25 * zoom);
       for (const cell of result.suitability) {
+        if (!inView(cell.x, cell.y)) continue;
         const sx = toScreenX(cell.x);
         const sy = toScreenY(cell.y);
-        const cellPixelSize = Math.max(8, 25 * zoom);
-
-        let color = "#10B98144";
-        if (cell.category === "optimal") color = "#05966966";
-        else if (cell.category === "suitable") color = "#10B98155";
-        else if (cell.category === "moderate") color = "#F59E0B55";
-        else if (cell.category === "restricted") color = "#EF444466";
-        else if (cell.category === "hazard") color = "#991B1B77";
-
+        let color: string;
+        switch (cell.category) {
+          case "optimal": color = "rgba(111, 176, 124, 0.42)"; break;
+          case "suitable": color = "rgba(111, 176, 124, 0.30)"; break;
+          case "moderate": color = "rgba(217, 164, 65, 0.30)"; break;
+          case "restricted": color = "rgba(217, 123, 123, 0.34)"; break;
+          default: color = "rgba(160, 60, 60, 0.42)";
+        }
         ctx.fillStyle = color;
-        ctx.fillRect(sx - cellPixelSize / 2, sy - cellPixelSize / 2, cellPixelSize, cellPixelSize);
+        ctx.fillRect(sx - cellPx / 2, sy - cellPx / 2, cellPx, cellPx);
       }
     }
 
-    // 4. Corridor Buffers (15m Road / 30m Riparian)
+    /* 4. Corridor buffers */
     if (layers.roadBuffer || layers.riparianBuffer) {
       for (const buf of result.buffers) {
         const isRiparian = buf.featureName.includes("Reserve") && buf.reserveWidthM >= 30;
         if (isRiparian && !layers.riparianBuffer) continue;
         if (!isRiparian && !layers.roadBuffer) continue;
 
-        ctx.fillStyle = isRiparian ? "#06B6D418" : "#F59E0B18";
-        ctx.strokeStyle = isRiparian ? "#06B6D4" : "#F59E0B";
+        ctx.fillStyle = isRiparian ? "rgba(98, 191, 195, 0.09)" : "rgba(217, 154, 91, 0.09)";
+        ctx.strokeStyle = isRiparian ? "rgba(98, 191, 195, 0.55)" : "rgba(217, 154, 91, 0.55)";
         ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
+        ctx.setLineDash([5, 4]);
 
-        const drawPolygon = (pts1: [number, number][], pts2: [number, number][]) => {
-          if (pts1.length < 2 || pts2.length < 2) return;
+        const drawCorridor = (buf: { polygon: [number, number][]; leftOffset: [number, number][]; rightOffset: [number, number][] }) => {
+          const ring = buf.polygon.length > 2 ? buf.polygon : null;
+          const edges = ring ?? buf.leftOffset;
+          const back = ring ? [] : buf.rightOffset;
+          if (edges.length < 2) return;
           ctx.beginPath();
-          ctx.moveTo(toScreenX(pts1[0][0]), toScreenY(pts1[0][1]));
-          for (let i = 1; i < pts1.length; i++) {
-            ctx.lineTo(toScreenX(pts1[i][0]), toScreenY(pts1[i][1]));
-          }
-          for (let i = pts2.length - 1; i >= 0; i--) {
-            ctx.lineTo(toScreenX(pts2[i][0]), toScreenY(pts2[i][1]));
-          }
+          ctx.moveTo(toScreenX(edges[0][0]), toScreenY(edges[0][1]));
+          for (let i = 1; i < edges.length; i++) ctx.lineTo(toScreenX(edges[i][0]), toScreenY(edges[i][1]));
+          for (let i = back.length - 1; i >= 0; i--) ctx.lineTo(toScreenX(back[i][0]), toScreenY(back[i][1]));
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
         };
-
-        drawPolygon(buf.leftOffset, buf.rightOffset);
+        drawCorridor(buf);
         ctx.setLineDash([]);
       }
     }
 
-    // 5. Delaunay TIN Triangles (Wireframe)
+    /* 5. TIN wireframe (cull triangles wholly outside the view) */
     if (layers.tin && result.tin) {
-      ctx.strokeStyle = basemap === "cad" ? "#CBD5E1" : "#1E293B88";
+      ctx.strokeStyle = isCad ? "rgba(0,0,0,0.18)" : "rgba(255,255,255,0.07)";
       ctx.lineWidth = 0.6;
       for (const tri of result.tin.triangles) {
+        if (
+          !inView(tri.p1.easting, tri.p1.northing) &&
+          !inView(tri.p2.easting, tri.p2.northing) &&
+          !inView(tri.p3.easting, tri.p3.northing)
+        )
+          continue;
         ctx.beginPath();
         ctx.moveTo(toScreenX(tri.p1.easting), toScreenY(tri.p1.northing));
         ctx.lineTo(toScreenX(tri.p2.easting), toScreenY(tri.p2.northing));
@@ -263,42 +494,60 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    // 6. Contours (1m minor / 5m major)
-    if (layers.contours) {
+    /* 6. Contours — minor/major hierarchy, viewport-culled with LOD stride */
+    if (layers.contours && result.contours.length > 0) {
+      let totalContourPts = 0;
+      for (const c of result.contours) totalContourPts += c.points.length;
+      const stride = totalContourPts > 12000 ? Math.ceil(totalContourPts / 12000) : 1;
       for (const c of result.contours) {
-        ctx.strokeStyle = c.isMajor
-          ? (basemap === "cad" ? "#B45309" : "#F59E0B")
-          : (basemap === "cad" ? "#CBD5E1" : "#475569");
-        ctx.lineWidth = c.isMajor ? 1.4 : 0.7;
+        // Line-level cull: skip stroking when no vertex lands near the view
+        let visible = false;
+        for (const pt of c.points) {
+          if (inView(pt[0], pt[1])) {
+            visible = true;
+            break;
+          }
+        }
+        if (!visible) continue;
 
+        ctx.strokeStyle = c.isMajor ? C.contourMajor : C.contourMinor;
+        ctx.globalAlpha = c.isMajor ? 0.9 : 0.55;
+        ctx.lineWidth = c.isMajor ? 1.3 : 0.7;
         ctx.beginPath();
-        c.points.forEach((pt, idx) => {
+        let first = true;
+        for (let i = 0; i < c.points.length; i += stride) {
+          const pt = c.points[i];
           const sx = toScreenX(pt[0]);
           const sy = toScreenY(pt[1]);
-          if (idx === 0) ctx.moveTo(sx, sy);
-          else ctx.lineTo(sx, sy);
-        });
-        ctx.stroke();
-
-        // Major contour elevation labels
-        if (c.isMajor && c.points.length > 5) {
-          const midPt = c.points[Math.floor(c.points.length / 2)];
-          const lx = toScreenX(midPt[0]);
-          const ly = toScreenY(midPt[1]);
-          ctx.fillStyle = basemap === "cad" ? "#B45309" : "#F59E0B";
-          ctx.font = "8.5px monospace";
-          ctx.fillText(`${c.elevation}m`, lx + 3, ly - 3);
+          if (first) {
+            ctx.moveTo(sx, sy);
+            first = false;
+          } else {
+            ctx.lineTo(sx, sy);
+          }
         }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
       }
     }
 
-    // 7. Feature Vectors (Roads, Rivers, Buildings)
+    /* 7. Feature vectors (viewport-culled) */
     for (const vec of result.vectors) {
-      if (vec.category === "boundary") continue; // drawn separately
+      if (vec.category === "boundary") continue;
       if (vec.category === "road" && !layers.roads) continue;
       if (vec.category === "water" && !layers.rivers) continue;
 
+      let visible = false;
+      for (const pt of vec.points) {
+        if (inView(pt.easting, pt.northing)) {
+          visible = true;
+          break;
+        }
+      }
+      if (!visible) continue;
+
       ctx.strokeStyle = vec.color;
+      ctx.globalAlpha = isCad ? 0.9 : 0.85;
       ctx.lineWidth = vec.lineWidth;
       if (vec.lineType === "dashed") ctx.setLineDash([6, 4]);
       else if (vec.lineType === "dashdot") ctx.setLineDash([8, 3, 2, 3]);
@@ -314,14 +563,15 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       if (vec.isClosed) ctx.closePath();
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
     }
 
-    // 8. Cadastral Boundary Polygon
+    /* 8. Cadastral boundary polygon */
     if (layers.boundary && result.boundary) {
       const b = result.boundary;
-      ctx.fillStyle = "#3B82F614";
-      ctx.strokeStyle = "#3B82F6";
-      ctx.lineWidth = 2.5;
+      ctx.fillStyle = C.boundaryFill;
+      ctx.strokeStyle = C.boundary;
+      ctx.lineWidth = 2;
 
       ctx.beginPath();
       b.points.forEach((pt, idx) => {
@@ -334,170 +584,478 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       ctx.fill();
       ctx.stroke();
 
-      // Bearing & Distance badges along boundary lines
-      if (layers.bearings) {
-        for (const bd of b.bearingsDistances) {
-          const p1 = b.points.find((p) => p.id === bd.fromId);
-          const p2 = b.points.find((p) => p.id === bd.toId);
-          if (!p1 || !p2) continue;
-
-          const mx = (toScreenX(p1.easting) + toScreenX(p2.easting)) / 2;
-          const my = (toScreenY(p1.northing) + toScreenY(p2.northing)) / 2;
-
-          ctx.fillStyle = basemap === "cad" ? "#FFFFFFEE" : "#0F172AEE";
-          ctx.strokeStyle = basemap === "cad" ? "#CBD5E1" : "#334155";
-          ctx.lineWidth = 0.5;
-
-          const badgeW = 75;
-          const badgeH = 22;
-          ctx.fillRect(mx - badgeW / 2, my - badgeH / 2, badgeW, badgeH);
-          ctx.strokeRect(mx - badgeW / 2, my - badgeH / 2, badgeW, badgeH);
-
-          ctx.fillStyle = basemap === "cad" ? "#0F172A" : "#F8FAFC";
-          ctx.font = "8px monospace";
-          ctx.textAlign = "center";
-          ctx.fillText(bd.bearingDms, mx, my - 2);
-          ctx.fillStyle = "#3B82F6";
-          ctx.fillText(`${bd.distanceM.toFixed(1)}m`, mx, my + 8);
-          ctx.textAlign = "left";
-        }
-      }
+      /* Bearing/distance annotations — drawn in the label pass below */
     }
 
-    // 9. Hazard Sinks & Exposed Assets
+    /* 9. Hazard sinks — cartographic: hatched impact disc + ring, no cartoon blobs */
+    const hazardGeoms: { x: number; y: number; r: number; depth: number }[] = [];
     if (layers.hazards) {
       for (const sink of result.hazardSinks) {
         const sx = toScreenX(sink.center[0]);
         const sy = toScreenY(sink.center[1]);
-        const r = Math.max(15, sink.depthM * 10 * zoom);
+        const r = Math.min(34, Math.max(10, sink.depthM * 10 * zoom));
+        hazardGeoms.push({ x: sx, y: sy, r, depth: sink.depthM });
 
-        ctx.fillStyle = "#EF444422";
-        ctx.strokeStyle = "#EF4444";
-        ctx.lineWidth = 1.5;
+        // hatch pattern
+        const pc = document.createElement("canvas");
+        pc.width = 6; pc.height = 6;
+        const pg = pc.getContext("2d");
+        if (pg) {
+          pg.strokeStyle = "rgba(217, 123, 123, 0.5)";
+          pg.lineWidth = 1;
+          pg.beginPath();
+          pg.moveTo(-1, 7); pg.lineTo(7, -1);
+          pg.moveTo(-1, 1); pg.lineTo(1, -1);
+          pg.stroke();
+          const pattern = ctx.createPattern(pc, "repeat");
+          if (pattern) {
+            ctx.beginPath();
+            ctx.arc(sx, sy, r, 0, 2 * Math.PI);
+            ctx.fillStyle = pattern;
+            ctx.fill();
+          }
+        }
+
+        ctx.strokeStyle = "rgba(217, 123, 123, 0.85)";
+        ctx.lineWidth = 1.2;
         ctx.beginPath();
         ctx.arc(sx, sy, r, 0, 2 * Math.PI);
-        ctx.fill();
         ctx.stroke();
 
-        ctx.fillStyle = "#EF4444";
-        ctx.font = "bold 9px monospace";
-        ctx.fillText(`! FLOOD SINK: -${sink.depthM}m`, sx + r + 4, sy);
+        // impact ring
+        ctx.setLineDash([3, 3]);
+        ctx.strokeStyle = "rgba(217, 123, 123, 0.35)";
+        ctx.beginPath();
+        ctx.arc(sx, sy, r + 6, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
-    // 10. Electrification Clusters (generic)
+    /* 10. Energy clusters */
     if (layers.energy) {
       for (const ec of result.energyClusters) {
         const sx = toScreenX(ec.centroid[0]);
         const sy = toScreenY(ec.centroid[1]);
-        const r = Math.max(18, (ec.clusterRadiusM / 10) * zoom);
+        const r = Math.min(40, Math.max(14, (ec.clusterRadiusM / 10) * zoom));
 
-        ctx.fillStyle = "#FACC1522";
-        ctx.strokeStyle = "#FACC15";
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([3, 3]);
+        ctx.fillStyle = "rgba(217, 201, 94, 0.07)";
+        ctx.strokeStyle = "rgba(217, 201, 94, 0.6)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
         ctx.beginPath();
         ctx.arc(sx, sy, r, 0, 2 * Math.PI);
         ctx.fill();
         ctx.stroke();
         ctx.setLineDash([]);
-
-        ctx.fillStyle = "#FDE047";
-        ctx.font = "bold 9px monospace";
-        ctx.fillText(`${ec.recommendedType}: ${ec.recommendedSolarKw}kWp (${ec.householdCount} HH)`, sx + r + 4, sy);
       }
     }
 
-    // 11. Survey Points & Beacon Pins
+    } // end renderStatic
+
+    /* ---- Static cache orchestration ----
+       Heavy layers re-stroke only when the view, basemap, layer set, or
+       document changes; every other redraw (selection, hover, label state)
+       blits the cached scene and repaints the cheap dynamic pass. */
+    const sig = `${zoom.toFixed(4)}|${pan.x.toFixed(2)}|${pan.y.toFixed(2)}|${basemap}|${layersSig}|${tilesEpoch}|${activeEpsg}`;
+    let sc = staticCanvasRef.current;
+    if (!sc) {
+      sc = document.createElement("canvas");
+      staticCanvasRef.current = sc;
+    }
+    if (sc.width !== targetW || sc.height !== targetH) {
+      sc.width = targetW;
+      sc.height = targetH;
+    }
+    const needStatic = sig !== staticSigRef.current || staticResultRef.current !== result;
+    if (needStatic) {
+      const sctx = sc.getContext("2d");
+      if (sctx) {
+        sctx.setTransform(1, 0, 0, 1, 0, 0);
+        sctx.clearRect(0, 0, sc.width, sc.height);
+        sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        renderStatic(sctx, w, h);
+
+        /* Tile attribution / connectivity note — drawn into the static scene
+           last, pinned lower-right like a proper cartographic credit line. */
+        if (tileProvider) {
+          const credit =
+            tileStats.drawn > 0
+              ? tileProvider.attribution
+              : typeof navigator !== "undefined" && navigator.onLine === false
+                ? "OFFLINE — vector basemap fallback"
+                : `loading ${tileProvider.label}…`;
+          sctx.font = "8.5px 'IBM Plex Mono', monospace";
+          sctx.textAlign = "right";
+          sctx.lineWidth = 2.5;
+          sctx.lineJoin = "round";
+          sctx.strokeStyle = isOsmLight ? "rgba(255,255,255,0.8)" : "rgba(0,0,0,0.6)";
+          sctx.strokeText(credit, w - 14, h - 10);
+          sctx.fillStyle = isOsmLight ? "#4b4b52" : "rgba(232,232,234,0.72)";
+          sctx.fillText(credit, w - 14, h - 10);
+          sctx.textAlign = "center";
+        }
+      }
+      staticSigRef.current = sig;
+      staticResultRef.current = result;
+    }
+
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(sc, 0, 0, w, h);
+
+    /* 11. Survey points / beacons — LOD: decimate beyond ~2k visible features */
+    const selSet = new Set(selectedPointIds);
+    let dotMode = false;
+    let pointStride = 1;
     if (layers.beacons) {
+      let visibleCount = 0;
       for (const pt of result.points) {
+        if (inView(pt.easting, pt.northing)) visibleCount++;
+      }
+      if (visibleCount > 2000) {
+        dotMode = true;
+        pointStride = Math.ceil(visibleCount / 2000);
+      }
+
+      let visibleSeq = 0;
+      for (const pt of result.points) {
+        const isSelected = selSet.has(pt.id);
+        if (!inView(pt.easting, pt.northing) && !isSelected) continue;
+        if (dotMode && !isSelected) {
+          visibleSeq++;
+          if (visibleSeq % pointStride !== 0) continue;
+        }
         const sx = toScreenX(pt.easting);
         const sy = toScreenY(pt.northing);
+        const isBnd = pt.category === "boundary";
 
-        const isSelected = selectedPointIds?.includes(pt.id);
         if (isSelected) {
           ctx.beginPath();
-          ctx.arc(sx, sy, 8, 0, 2 * Math.PI);
-          ctx.fillStyle = "#FACC1533";
+          ctx.arc(sx, sy, 7, 0, 2 * Math.PI);
+          ctx.fillStyle = "rgba(217, 164, 65, 0.18)";
           ctx.fill();
-          ctx.strokeStyle = "#FACC15";
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = C.selected;
+          ctx.lineWidth = 1.5;
           ctx.stroke();
         }
 
-        const isBnd = pt.category === "boundary";
-        ctx.fillStyle = isSelected ? "#FACC15" : isBnd ? "#EF4444" : "#3B82F6";
-        ctx.beginPath();
-        ctx.arc(sx, sy, isBnd ? 4.5 : 3, 0, 2 * Math.PI);
-        ctx.fill();
-        ctx.strokeStyle = "#FFFFFF";
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        if (dotMode && !isSelected) {
+          ctx.fillStyle = isBnd ? C.beaconBoundary : C.beaconOther;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 1.6, 0, 2 * Math.PI);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = isSelected ? C.selected : isBnd ? C.beaconBoundary : C.beaconOther;
+          ctx.beginPath();
+          ctx.arc(sx, sy, isBnd ? 4 : 2.8, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.strokeStyle = isCad ? "#ffffff" : "#161619";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      }
 
-        // Label
-        ctx.fillStyle = isSelected ? "#FACC15" : basemap === "cad" ? "#0F172A" : "#F1F5F9";
-        ctx.font = isSelected ? "bold 9px monospace" : "8px sans-serif";
-        ctx.fillText(pt.id, sx + 6, sy - 4);
+      /* OSINT locate marker — pulsing-ring + label at the searched place. */
+      const focus = focusRef.current;
+      if (focus && !isCad) {
+        const [fe, fn] = fromWGS84(activeEpsg, focus.lon, focus.lat);
+        if (Number.isFinite(fe) && Number.isFinite(fn)) {
+          const fsx = toScreenX(fe);
+          const fsy = toScreenY(fn);
+          ctx.beginPath();
+          ctx.arc(fsx, fsy, 9, 0, 2 * Math.PI);
+          ctx.strokeStyle = C.selected;
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(fsx, fsy, 2.6, 0, 2 * Math.PI);
+          ctx.fillStyle = C.selected;
+          ctx.fill();
+          if (focus.label) {
+            ctx.font = "10.5px 'IBM Plex Sans', sans-serif";
+            const tw = ctx.measureText(focus.label).width;
+            const lx = Math.min(Math.max(fsx + 12, 4), w - tw - 20);
+            const ly = Math.max(fsy - 14, 14);
+            ctx.fillStyle = C.chipBg;
+            ctx.strokeStyle = C.chipLine;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(lx - 5, ly - 11, tw + 10, 16, 3);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = C.selected;
+            ctx.fillText(focus.label, lx, ly + 1);
+          }
+        }
       }
     }
 
-    // 12. Cartographic HUD Elements (Scale Bar & North Arrow)
-    // North Arrow
-    ctx.save();
-    ctx.translate(w - 40, 45);
-    ctx.fillStyle = basemap === "cad" ? "#FFFFFFEE" : "#0F172AEE";
-    ctx.beginPath();
-    ctx.arc(0, 0, 20, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.strokeStyle = basemap === "cad" ? "#CBD5E1" : "#334155";
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    /* ---------------- Label pass — greedy collision avoidance ----------------
+       Priority order: bearing badges > selected points > boundary beacons >
+       other beacons > contour labels > hazard tags > energy tags.
+       Lower-priority labels that would overlap are suppressed. */
+    const placed: PlacedRect[] = [];
+    const tryPlace = (cx: number, cy: number, wPx: number, hPx: number): boolean => {
+      const r: PlacedRect = { x1: cx - wPx / 2, y1: cy - hPx / 2, x2: cx + wPx / 2, y2: cy + hPx / 2 };
+      for (const p of placed) {
+        if (r.x1 < p.x2 && r.x2 > p.x1 && r.y1 < p.y2 && r.y2 > p.y1) return false;
+      }
+      placed.push(r);
+      return true;
+    };
 
-    ctx.fillStyle = "#0284C7";
+    ctx.textAlign = "center";
+
+    /* Over raster tiles, labels get a contrasting halo so the decluttered
+       text stays readable on light streets and dark aerial imagery alike. */
+    const labelHalo = tileProvider ? (isOsmLight ? "rgba(255,255,255,0.82)" : "rgba(0,0,0,0.62)") : null;
+    const drawHaloText = (text: string, x: number, y: number, fill: string) => {
+      if (labelHalo) {
+        ctx.lineWidth = 2.5;
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = labelHalo;
+        ctx.strokeText(text, x, y);
+      }
+      ctx.fillStyle = fill;
+      ctx.fillText(text, x, y);
+    };
+    const inkBadge = isCad ? "#3a3a40" : isOsmLight ? "#26262b" : C.ink;
+    const inkLabel = isCad ? "#3a3a40" : isOsmLight ? "#3f3f46" : C.ink2;
+
+    /* P1 — bearing & distance badges */
+    if (layers.boundary && layers.bearings && result.boundary) {
+      const b = result.boundary;
+      ctx.font = "8.5px 'IBM Plex Mono', monospace";
+      for (const bd of b.bearingsDistances) {
+        const p1 = b.points.find((p) => p.id === bd.fromId);
+        const p2 = b.points.find((p) => p.id === bd.toId);
+        if (!p1 || !p2) continue;
+
+        // offset badge perpendicular from the line midpoint
+        const mx = (toScreenX(p1.easting) + toScreenX(p2.easting)) / 2;
+        const my = (toScreenY(p1.northing) + toScreenY(p2.northing)) / 2;
+        const dx = toScreenX(p2.easting) - toScreenX(p1.easting);
+        const dy = toScreenY(p2.northing) - toScreenY(p1.northing);
+        const len = Math.hypot(dx, dy) || 1;
+        const off = 16;
+        const px = mx + (-dy / len) * off;
+        const py = my + (dx / len) * off;
+
+        if (!tryPlace(px, py, 78, 24)) continue;
+
+        ctx.fillStyle = C.chipBg;
+        ctx.strokeStyle = C.chipLine;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(px - 38, py - 11, 76, 22, 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.fillStyle = inkBadge;
+        ctx.fillText(bd.bearingDms, px, py - 1.5);
+        ctx.fillStyle = C.boundary;
+        ctx.fillText(`${bd.distanceM.toFixed(1)} m`, px, py + 8);
+      }
+    }
+
+    /* P2/P3/P4 — beacon labels (suppressed in dot mode except selection + boundary) */
+    if (layers.beacons) {
+      const ordered: SurveyPoint[] = dotMode
+        ? [
+            ...result.points.filter((p) => selSet.has(p.id)),
+            ...result.points.filter((p) => !selSet.has(p.id) && p.category === "boundary"),
+          ]
+        : [
+            ...result.points.filter((p) => selSet.has(p.id)),
+            ...result.points.filter((p) => !selSet.has(p.id) && p.category === "boundary"),
+            ...result.points.filter((p) => !selSet.has(p.id) && p.category !== "boundary"),
+          ];
+      for (const pt of ordered) {
+        const isSelected = selSet.has(pt.id);
+        if (!inView(pt.easting, pt.northing) && !isSelected) continue;
+        const sx = toScreenX(pt.easting);
+        const sy = toScreenY(pt.northing);
+        ctx.font = isSelected
+          ? "600 9px 'IBM Plex Mono', monospace"
+          : "8.5px 'IBM Plex Mono', monospace";
+        const lw = ctx.measureText(pt.id).width;
+        if (!tryPlace(sx + 6 + lw / 2, sy - 7, lw + 10, 12)) continue;
+
+        ctx.textAlign = "left";
+        drawHaloText(pt.id, sx + 6, sy - 4, isSelected ? C.selected : inkLabel);
+        ctx.textAlign = "center";
+      }
+    }
+
+    /* P5 — major contour elevation labels */
+    if (layers.contours) {
+      ctx.font = "8.5px 'IBM Plex Mono', monospace";
+      for (const c of result.contours) {
+        if (!c.isMajor || c.points.length < 6) continue;
+        const midPt = c.points[Math.floor(c.points.length / 2)];
+        const lx = toScreenX(midPt[0]);
+        const ly = toScreenY(midPt[1]);
+        const text = `${c.elevation} m`;
+        if (!tryPlace(lx, ly, 40, 12)) continue;
+        drawHaloText(text, lx, ly - 3, isCad ? "#8a6a3a" : isOsmLight ? "#7a5a28" : C.contourMajor);
+      }
+    }
+
+    /* P6 — hazard tags (geometry mirrored from the static pass) */
+    if (layers.hazards) {
+      ctx.font = "8.5px 'IBM Plex Mono', monospace";
+      for (const sink of result.hazardSinks) {
+        const hz = {
+          x: toScreenX(sink.center[0]),
+          y: toScreenY(sink.center[1]),
+          r: Math.min(34, Math.max(10, sink.depthM * 10 * zoom)),
+          depth: sink.depthM,
+        };
+        const tx = hz.x + hz.r + 8;
+        const text = `sink −${hz.depth} m`;
+        const tw = ctx.measureText(text).width;
+        if (!tryPlace(tx + tw / 2, hz.y, tw + 10, 14)) continue;
+        ctx.textAlign = "left";
+        ctx.fillStyle = C.hazard;
+        ctx.fillText(text, tx, hz.y + 3);
+        ctx.textAlign = "center";
+      }
+    }
+
+    /* P7 — energy tags */
+    if (layers.energy) {
+      ctx.font = "8.5px 'IBM Plex Mono', monospace";
+      for (const ec of result.energyClusters) {
+        const sx = toScreenX(ec.centroid[0]);
+        const sy = toScreenY(ec.centroid[1]);
+        const r = Math.min(40, Math.max(14, (ec.clusterRadiusM / 10) * zoom));
+        const text = `${ec.recommendedType} · ${ec.recommendedSolarKw} kWp · ${ec.householdCount} HH`;
+        const tw = ctx.measureText(text).width;
+        if (!tryPlace(sx + r + 6 + tw / 2, sy, tw + 12, 14)) continue;
+        ctx.textAlign = "left";
+        ctx.fillStyle = C.energy;
+        ctx.fillText(text, sx + r + 8, sy + 3);
+        ctx.textAlign = "center";
+      }
+    }
+
+    /* ---------------- DEM probe marker (dynamic furniture) ---------------- */
+    if (probe) {
+      const sx = toScreenX(probe.worldE);
+      const sy = toScreenY(probe.worldN);
+      ctx.save();
+      // crosshair marker
+      ctx.strokeStyle = C.selected;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 9, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(sx - 13, sy);
+      ctx.lineTo(sx - 5, sy);
+      ctx.moveTo(sx + 5, sy);
+      ctx.lineTo(sx + 13, sy);
+      ctx.moveTo(sx, sy - 13);
+      ctx.lineTo(sx, sy - 5);
+      ctx.moveTo(sx, sy + 5);
+      ctx.lineTo(sx, sy + 13);
+      ctx.stroke();
+
+      const text =
+        probe.status === "loading"
+          ? "sampling regional DEM…"
+          : probe.status === "error" || !probe.dem
+            ? "DEM unavailable (offline or outside coverage)"
+            : `DEM ${probe.dem.elevationM.toLocaleString("en-US", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })} m  ·  ±${probe.dem.resolutionM} m/px  ·  ${DEM_ATTRIBUTION}`;
+      ctx.font = "9px 'IBM Plex Mono', monospace";
+      const tw = ctx.measureText(text).width;
+      const cx = sx + 18;
+      const cy = sy - 14;
+      ctx.fillStyle = C.chipBg;
+      ctx.strokeStyle = C.chipLine;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(cx, cy - 8, tw + 14, 16, 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.textAlign = "left";
+      ctx.fillStyle = probe.status === "done" ? C.ink : C.ink2;
+      ctx.fillText(text, cx + 7, cy + 3);
+      ctx.textAlign = "center";
+      ctx.restore();
+    }
+
+    /* ---------------- Cartographic furniture ---------------- */
+
+    /* North arrow — minimal, bottom-right */
+    ctx.save();
+    ctx.translate(w - 28, h - 78);
+    const furnitureInk = isCad ? "#3a3a40" : isOsmLight ? "#3f3f46" : C.ink2;
+    ctx.strokeStyle = furnitureInk;
+    ctx.fillStyle = furnitureInk;
+    ctx.lineWidth = 1;
+    // needle
     ctx.beginPath();
-    ctx.moveTo(0, -14);
-    ctx.lineTo(4, 0);
-    ctx.lineTo(0, -2);
-    ctx.lineTo(-4, 0);
+    ctx.moveTo(0, -12);
+    ctx.lineTo(3.5, 4);
+    ctx.lineTo(0, 1.5);
+    ctx.lineTo(-3.5, 4);
     ctx.closePath();
     ctx.fill();
-    ctx.fillStyle = basemap === "cad" ? "#64748B" : "#94A3B8";
     ctx.beginPath();
-    ctx.moveTo(0, 14);
-    ctx.lineTo(4, 0);
-    ctx.lineTo(0, 2);
-    ctx.lineTo(-4, 0);
-    ctx.closePath();
-    ctx.fill();
-    ctx.font = "bold 9px sans-serif";
-    ctx.fillStyle = basemap === "cad" ? "#0F172A" : "#F8FAFC";
+    ctx.moveTo(0, -12);
+    ctx.lineTo(0, 10);
+    ctx.stroke();
+    ctx.font = "600 9px 'IBM Plex Sans', sans-serif";
     ctx.textAlign = "center";
     ctx.fillText("N", 0, -16);
     ctx.restore();
 
-    // Scale Bar (Bottom Left)
-    const scaleBarWorldM = 100;
-    const scaleBarPx = scaleBarWorldM * zoom;
-    if (scaleBarPx > 40 && scaleBarPx < 300) {
-      ctx.fillStyle = basemap === "cad" ? "#FFFFFFEE" : "#0F172AEE";
-      ctx.fillRect(15, h - 35, scaleBarPx + 20, 24);
-      ctx.strokeStyle = basemap === "cad" ? "#CBD5E1" : "#334155";
-      ctx.strokeRect(15, h - 35, scaleBarPx + 20, 24);
-
-      ctx.fillStyle = "#0284C7";
-      ctx.fillRect(25, h - 22, scaleBarPx / 2, 4);
-      ctx.fillStyle = basemap === "cad" ? "#0F172A" : "#FFFFFF";
-      ctx.fillRect(25 + scaleBarPx / 2, h - 22, scaleBarPx / 2, 4);
-
-      ctx.font = "8px monospace";
-      ctx.fillStyle = basemap === "cad" ? "#0F172A" : "#F8FAFC";
-      ctx.fillText("0", 23, h - 25);
-      ctx.fillText(`${scaleBarWorldM / 2}m`, 25 + scaleBarPx / 2 - 8, h - 25);
-      ctx.fillText(`${scaleBarWorldM}m`, 25 + scaleBarPx - 12, h - 25);
+    /* Scale bar — rounded nice value, anchored bottom-left */
+    const niceCandidates = [1, 2, 5].flatMap((m) => [1, 2, 5].map((k) => k * Math.pow(10, m)));
+    const allCandidates = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
+    let barM = 100;
+    for (const cand of allCandidates) {
+      const px = cand * zoom;
+      if (px >= 60 && px <= 190) { barM = cand; break; }
+      void niceCandidates;
     }
-  }, [zoom, pan, basemap, layers, result]);
+    const barPx = barM * zoom;
+    if (barPx > 20) {
+      const bx = 16;
+      const by = h - 26;
+      const barInk = isCad ? "#3a3a40" : isOsmLight ? "#26262b" : C.ink;
+      ctx.save();
+      // alternating fills
+      ctx.fillStyle = barInk;
+      ctx.fillRect(bx, by, barPx / 2, 3);
+      ctx.fillStyle = isCad
+        ? "rgba(58,58,64,0.25)"
+        : isOsmLight
+          ? "rgba(38,38,43,0.28)"
+          : "rgba(232,232,234,0.35)";
+      ctx.fillRect(bx + barPx / 2, by, barPx / 2, 3);
+      // end ticks
+      ctx.fillStyle = barInk;
+      ctx.fillRect(bx, by - 2, 1, 7);
+      ctx.fillRect(bx + barPx, by - 2, 1, 7);
+      ctx.font = "9px 'IBM Plex Mono', monospace";
+      ctx.textAlign = "left";
+      ctx.fillText("0", bx - 2, by - 5);
+      ctx.textAlign = "center";
+      ctx.fillText(`${barM / 2}`, bx + barPx / 2, by - 5);
+      ctx.textAlign = "right";
+      ctx.fillText(`${barM} m`, bx + barPx + 2, by - 5);
+      ctx.restore();
+    }
+  }, [zoom, pan, basemap, layers, layersSig, result, selectedPointIds, isCad, isOsmLight, tileProvider, tilesEpoch, activeEpsg, probe, resizeTick]);
 
-  // Mouse interaction handlers
+  /* ---------------- Interactions ---------------- */
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     setIsDragging(true);
     setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -513,8 +1071,8 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     const worldE = toWorldE(mx);
     const worldN = toWorldN(my);
 
-    // Approximate elevation from nearest vertex
-    let nearestElev = 1680;
+    // Elevation from nearest vertex within the TIN footprint
+    let nearestElev = 0;
     let minD = Infinity;
     for (const p of result.points) {
       const d = Math.hypot(p.easting - worldE, p.northing - worldN);
@@ -524,11 +1082,21 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
       }
     }
 
-    setCursorCoord({
-      easting: Number(worldE.toFixed(2)),
-      northing: Number(worldN.toFixed(2)),
-      elevation: Number(nearestElev.toFixed(2)),
+    let lat = 0, lon = 0;
+    try {
+      [lon, lat] = toWGS84(activeEpsg, worldE, worldN);
+    } catch {
+      /* geographic readout unavailable */
+    }
+
+    onCursorReadout?.({
+      easting: worldE,
+      northing: worldN,
+      elevation: nearestElev,
+      lat,
+      lon,
     });
+    setCursorTick((t) => t + 1);
 
     if (isDragging) {
       setPan({
@@ -540,6 +1108,53 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
 
   const handleMouseUp = () => setIsDragging(false);
 
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+    onCursorReadout?.(null);
+  };
+
+  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    if (probeMode) {
+      const worldE = toWorldE(mx);
+      const worldN = toWorldN(my);
+      let lat = 0, lon = 0;
+      try {
+        [lon, lat] = toWGS84(activeEpsg, worldE, worldN);
+      } catch {
+        return;
+      }
+      const next: ProbeState = { worldE, worldN, lat, lon, status: "loading" };
+      setProbe(next);
+      probeElevation(lat, lon).then((dem) => {
+        // Ignore stale probes from earlier clicks
+        setProbe((cur) =>
+          cur && cur.lat === next.lat && cur.lon === next.lon
+            ? { ...cur, status: dem ? "done" : "error", dem: dem ?? undefined }
+            : cur,
+        );
+      });
+      return;
+    }
+
+    if (!onSelectPoint) return;
+    let bestId: string | null = null;
+    let bestD = 10; // px hit radius
+    for (const p of result.points) {
+      const d = Math.hypot(toScreenX(p.easting) - mx, toScreenY(p.northing) - my);
+      if (d < bestD) {
+        bestD = d;
+        bestId = p.id;
+      }
+    }
+    if (bestId) onSelectPoint(bestId);
+  };
+
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const canvas = canvasRef.current;
@@ -548,8 +1163,8 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
-    const newZoom = Math.max(0.01, Math.min(50, zoom * zoomFactor));
+    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+    const newZoom = Math.max(0.005, Math.min(200, zoom * zoomFactor));
 
     setPan({
       x: mouseX - (mouseX - pan.x) * (newZoom / zoom),
@@ -558,143 +1173,110 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
     setZoom(newZoom);
   };
 
+  const basemapOptions: { id: BasemapMode; label: string }[] = [
+    { id: "dark", label: "Dark" },
+    { id: "osm", label: "Streets" },
+    { id: "topo", label: "Topo" },
+    { id: "imagery", label: "Aerial" },
+    { id: "sentinel2", label: "Sentinel-2" },
+    { id: "viirs", label: "Night" },
+    { id: "cad", label: "CAD" },
+  ];
+
   return (
-    <div className="relative w-full h-[calc(100vh-125px)] bg-[#0B0F17] overflow-hidden flex">
-      {/* 2D Canvas */}
+    <div className="relative w-full h-full bg-sunken overflow-hidden">
       <canvas
         ref={canvasRef}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
+        onClick={handleClick}
         onWheel={handleWheel}
-        className="w-full h-full cursor-crosshair block"
+        className="w-full h-full block cursor-crosshair"
+        style={{ outline: "none" }}
       />
 
-      {/* Floating Canvas Controls (Top Left) */}
-      <div className="absolute top-4 left-4 flex flex-col gap-2 z-10">
-        {/* Basemap Switcher */}
-        <div className="bg-slate-900/95 backdrop-blur border border-slate-800 rounded-lg p-1 flex items-center gap-1 shadow-xl">
-          <button
-            onClick={() => setBasemap("dark")}
-            className={`px-2.5 py-1 text-xs font-semibold rounded transition cursor-pointer ${
-              basemap === "dark" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
-            }`}
-            title="Dark Topographic Vector"
-          >
-            Dark Vector
-          </button>
-          <button
-            onClick={() => setBasemap("satellite")}
-            className={`px-2.5 py-1 text-xs font-semibold rounded transition cursor-pointer ${
-              basemap === "satellite" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
-            }`}
-            title="True-Color Aerial Imagery"
-          >
-            Satellite
-          </button>
-          <button
-            onClick={() => setBasemap("viirs")}
-            className={`px-2.5 py-1 text-xs font-semibold rounded transition cursor-pointer ${
-              basemap === "viirs" ? "bg-amber-600 text-white" : "text-slate-400 hover:text-white"
-            }`}
-            title="Night Lights Overlay (VIIRS-inspired — generic reference)"
-          >
-            Night Lights
-          </button>
-          <button
-            onClick={() => setBasemap("cad")}
-            className={`px-2.5 py-1 text-xs font-semibold rounded transition cursor-pointer ${
-              basemap === "cad" ? "bg-slate-700 text-white" : "text-slate-400 hover:text-white"
-            }`}
-            title="Clean Engineering Blueprint"
-          >
-            CAD Light
-          </button>
-        </div>
-
-        {/* Zoom & Fit Tools */}
-        <div className="bg-slate-900/95 backdrop-blur border border-slate-800 rounded-lg p-1 flex items-center gap-1 shadow-xl">
-          <button
-            onClick={() => setZoom((z) => z * 1.25)}
-            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition cursor-pointer"
-            title="Zoom In"
-          >
-            <ZoomIn className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setZoom((z) => z * 0.8)}
-            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition cursor-pointer"
-            title="Zoom Out"
-          >
-            <ZoomOut className="w-4 h-4" />
-          </button>
-          <button
-            onClick={handleFitBounds}
-            className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded transition cursor-pointer"
-            title="Fit to Extents"
-          >
-            <Maximize2 className="w-4 h-4" />
-          </button>
-          <div className="w-[1px] h-4 bg-slate-800 mx-0.5" />
-          <button
-            onClick={() => setShowLayerPanel((v) => !v)}
-            className={`p-1.5 rounded transition cursor-pointer ${
-              showLayerPanel ? "bg-blue-600/30 text-blue-400" : "text-slate-300 hover:text-white hover:bg-slate-800"
-            }`}
-            title="Layer Manager"
-          >
-            <Layers className="w-4 h-4" />
-          </button>
-          <button
-            onClick={() => setShowToolbox((v) => !v)}
-            className={`p-1.5 rounded transition cursor-pointer ${
-              showToolbox ? "bg-blue-600/30 text-blue-400" : "text-slate-300 hover:text-white hover:bg-slate-800"
-            }`}
-            title="Geoprocessing Toolbox (QGIS/ArcGIS Processing)"
-          >
-            <Wrench className="w-4 h-4" />
-          </button>
+      {/* Docked tool rail — left */}
+      <div className="absolute top-3 left-3 z-10 flex flex-col items-center bg-panel border border-line rounded-[4px] shadow-lg p-0.5 gap-0.5">
+        <button className="ui-btn-icon" onClick={() => setZoom((z) => Math.min(z * 1.25, 200))} title="Zoom in">
+          <ZoomIn className="w-4 h-4" />
+        </button>
+        <button className="ui-btn-icon" onClick={() => setZoom((z) => Math.max(z * 0.8, 0.005))} title="Zoom out">
+          <ZoomOut className="w-4 h-4" />
+        </button>
+        <button className="ui-btn-icon" onClick={handleFitBounds} title="Fit to extents">
+          <Maximize2 className="w-4 h-4" />
+        </button>
+        <div className="w-5 h-px bg-line-strong my-0.5" />
+        <button
+          className={`ui-btn-icon ${probeMode ? "is-active" : ""}`}
+          onClick={() => {
+            setProbeMode((v) => !v);
+            if (probeMode) setProbe(null);
+          }}
+          title="Regional DEM probe — click the map to sample regional elevation (Terrarium terrain tiles; context only, not a surveyed height). Esc to exit."
+        >
+          <Mountain className="w-4 h-4" />
+        </button>
+        <button
+          className={`ui-btn-icon ${showLayerPanel ? "is-active" : ""}`}
+          onClick={() => { setShowLayerPanel((v) => !v); setShowToolbox(false); }}
+          title="Layers"
+        >
+          <Layers className="w-4 h-4" />
+        </button>
+        <button
+          className={`ui-btn-icon ${showToolbox ? "is-active" : ""}`}
+          onClick={() => { setShowToolbox((v) => !v); setShowLayerPanel(false); }}
+          title="Geoprocessing toolbox"
+        >
+          <Wrench className="w-4 h-4" />
+        </button>
+        <div className="w-5 h-px bg-line-strong my-0.5" />
+        <div className="ui-btn-icon cursor-default" title="Pan / navigate — drag to pan, scroll to zoom, click beacon to select">
+          <MousePointer2 className="w-4 h-4" />
         </div>
       </div>
 
-      {/* Dynamic Layer Manager Panel */}
+      {/* Basemap switcher — top right, segmented */}
+      <div className="absolute top-3 right-3 z-10 flex items-center bg-panel border border-line rounded-[4px] shadow-lg overflow-hidden">
+        <span className="ui-label px-2 border-r border-line">Basemap</span>
+        <div className="flex">
+          {basemapOptions.map((o) => (
+            <button
+              key={o.id}
+              onClick={() => setBasemap(o.id)}
+              className={`px-2.5 h-7 text-[11px] font-medium transition-colors cursor-pointer ${
+                basemap === o.id
+                  ? "bg-raised text-ink"
+                  : "text-ink-3 hover:text-ink-2"
+              }`}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Layer manager — docked left */}
       {showLayerPanel && (
-        <div className="absolute top-20 left-4 z-30 shadow-2xl">
+        <div className="absolute top-[calc(0.75rem+192px)] left-3 z-30 shadow-2xl">
           <LayerPanel
             layers={layerItems}
             onChangeLayers={setLayerItems}
-            onZoomToLayer={() => handleFitBounds()}
+            onZoomToLayer={handleFitBounds}
             onClose={() => setShowLayerPanel(false)}
           />
         </div>
       )}
 
-      {/* Geoprocessing Toolbox Panel */}
+      {/* Geoprocessing toolbox — docked right */}
       {showToolbox && (
-        <div className="absolute top-20 right-4 z-30 shadow-2xl">
-          <ToolboxPanel
-            pipeline={result}
-            onClose={() => setShowToolbox(false)}
-          />
+        <div className="absolute top-3 right-3 z-30 shadow-2xl">
+          <ToolboxPanel pipeline={result} onClose={() => setShowToolbox(false)} />
         </div>
       )}
-
-      {/* Bottom Live Cursor Coordinate Bar */}
-      <div className="absolute bottom-2 right-4 bg-slate-900/90 backdrop-blur border border-slate-800 px-3.5 py-1.5 rounded-md text-[11px] font-mono text-slate-300 shadow-xl flex items-center gap-3 z-10">
-        <span className="text-blue-400 font-bold">EPSG:{activeEpsg}</span>
-        <span className="text-slate-600">|</span>
-        <span>E: <strong className="text-white">{cursorCoord.easting.toLocaleString()}m</strong></span>
-        <span>N: <strong className="text-white">{cursorCoord.northing.toLocaleString()}m</strong></span>
-        <span>H: <strong className="text-emerald-400">{cursorCoord.elevation.toFixed(2)}m MSL</strong></span>
-        {cursorLat !== 0 && (
-          <>
-            <span className="text-slate-600">|</span>
-            <span>Lat: <strong className="text-amber-400">{cursorLat.toFixed(5)}°</strong></span>
-            <span>Lon: <strong className="text-amber-400">{cursorLon.toFixed(5)}°</strong></span>
-          </>
-        )}
-      </div>
     </div>
   );
 };

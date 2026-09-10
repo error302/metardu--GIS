@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Header, ActiveTab } from "./components/Header";
-import { PipelineTelemetryBar } from "./components/PipelineTelemetry";
+import { StatusBar, CursorReadout } from "./components/StatusBar";
 import { MapCanvas2D } from "./components/MapCanvas2D";
 import { TerrainViewer3D } from "./components/TerrainViewer3D";
 import { McdaSuitabilityPanel } from "./components/McdaSuitabilityPanel";
@@ -11,43 +11,104 @@ import { PlanningAtlasViewer } from "./components/PlanningAtlasViewer";
 import { AttributeTable } from "./components/AttributeTable";
 import { ExportHubModal } from "./components/ExportHubModal";
 import { BENCHMARK_SCENARIOS, BenchmarkScenario } from "./data/sample-surveys";
-import { runAutonomousGisPipeline } from "./core/pipeline";
+import { pipelineService, PipelineProgressEvent } from "./core/pipeline-client";
+import { ingestFiles } from "./core/ingest";
+import { ensureGpkgBrowserLoader } from "./core/ingest/gpkg-browser";
 import { PipelineResult, SurveyPoint } from "./types/spatial";
-import { transform, crsEpsgFromMetadata, getCRS } from "./core/crs";
+import { transform, transformFromDef, crsEpsgFromMetadata, getCRS, registerCrsDefinition } from "./core/crs";
 import { createProjectSnapshot, downloadProjectFile, parseProjectFile } from "./core/project";
+import { useHistoryState } from "./hooks/use-history";
+import { initGeoidModel, subscribeGeoidStatus, GeoidStatus } from "./core/geoid/grid";
+import { DEFAULT_MCDA_WEIGHTS } from "./core/mcda-suitability";
+import { ComposerPanel } from "./components/ComposerPanel";
+import { AtlasSeriesPanel } from "./components/AtlasSeriesPanel";
+import { PostgisPanel } from "./components/PostgisPanel";
+import { ProvenancePanel } from "./components/ProvenancePanel";
+import { TraversePanel } from "./components/TraversePanel";
+import { ScenarioComparePanel } from "./components/ScenarioComparePanel";
+import { SyncPanel } from "./components/SyncPanel";
+import { OsintPanel } from "./components/OsintPanel";
+import { DemPanel } from "./components/DemPanel";
+import { OverpassBbox } from "./core/osint/overpass";
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("canvas2d");
   const [selectedScenario, setSelectedScenario] = useState<BenchmarkScenario>(BENCHMARK_SCENARIOS[0]);
-  const [pipelineResult, setPipelineResult] = useState<PipelineResult | null>(null);
   const [selectedPointIds, setSelectedPointIds] = useState<string[]>([]);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [progress, setProgress] = useState<{ pct: number; stage: string } | null>(null);
 
-  // Execute pipeline for scenario
-  const executePipeline = async (scenario: BenchmarkScenario, customPoints?: SurveyPoint[]) => {
+  // Real geoid model — lazy-load the bundled EGM2008 East-Africa grid on mount.
+  const [geoidStatus, setGeoidStatus] = useState<GeoidStatus>({
+    state: "uninitialized",
+    model: "parametric",
+  });
+  useEffect(() => {
+    const unsub = subscribeGeoidStatus(setGeoidStatus);
+    initGeoidModel();
+    return unsub;
+  }, []);
+
+  // Single immutable document with a bounded undo/redo command stack
+  const doc = useHistoryState<PipelineResult | null>(null, "Workspace opened");
+  const pipelineResult = doc.state;
+
+  // Live view state reported by the 2D canvas into the global status bar
+  const [cursor, setCursor] = useState<CursorReadout | null>(null);
+  const [scaleDenominator, setScaleDenominator] = useState(1000);
+
+  // OSINT locate — recenter the 2D canvas on a searched place.
+  const [focusWgs84, setFocusWgs84] = useState<{ lon: number; lat: number; label?: string } | null>(null);
+  const handleLocate = useCallback((lon: number, lat: number, label: string) => {
+    setFocusWgs84({ lon, lat, label });
+    setActiveTab("canvas2d");
+  }, []);
+
+  /**
+   * Execute the pipeline through the worker service (main-thread fallback
+   * transparent). mode "reset" starts a new document; "push" records an
+   * undoable command.
+   */
+  const executePipeline = async (
+    scenario: BenchmarkScenario,
+    customPoints?: SurveyPoint[] | string,
+    mode: "push" | "reset" = "push",
+    label = "Run pipeline"
+  ) => {
     setIsLoading(true);
-    const pts = customPoints || scenario.points;
-    const res = await runAutonomousGisPipeline(pts, scenario.metadata);
-    setPipelineResult(res);
-    setIsLoading(false);
+    setProgress({ pct: 0, stage: "Queued" });
+    try {
+      const res = await pipelineService.run(customPoints ?? scenario.points, scenario.metadata, {
+        onProgress: (p: PipelineProgressEvent) =>
+          setProgress({ pct: Math.round((p.step / p.totalSteps) * 100), stage: p.stage }),
+      });
+      if (mode === "reset") doc.reset(res, label);
+      else doc.push(res, label);
+    } catch (err: any) {
+      alert(`Pipeline failed: ${err?.message ?? err}`);
+    } finally {
+      setIsLoading(false);
+      setProgress(null);
+    }
   };
 
-  // Run on initial mount
+  // Initial load — opens a fresh document (not an undoable command)
   useEffect(() => {
-    executePipeline(selectedScenario);
+    executePipeline(selectedScenario, undefined, "reset", "Workspace opened");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleScenarioChange = (scenario: BenchmarkScenario) => {
     setSelectedScenario(scenario);
-    executePipeline(scenario);
+    executePipeline(scenario, undefined, "reset", `Open scenario: ${scenario.title}`);
   };
 
   const handleRunPipeline = () => {
     if (pipelineResult) {
-      executePipeline(selectedScenario, pipelineResult.points);
+      executePipeline(selectedScenario, pipelineResult.points, "push", "Re-run pipeline");
     } else {
-      executePipeline(selectedScenario);
+      executePipeline(selectedScenario, undefined, "reset", "Run pipeline");
     }
   };
 
@@ -72,7 +133,9 @@ export const App: React.FC = () => {
         },
         points: [],
       },
-      text as any
+      text as any,
+      "reset",
+      "Ingest pasted survey"
     );
   };
 
@@ -99,7 +162,12 @@ export const App: React.FC = () => {
       crs: newCrsName,
     };
 
-    executePipeline({ ...selectedScenario, metadata: updatedMetadata }, reprojectedPoints);
+    executePipeline(
+      { ...selectedScenario, metadata: updatedMetadata },
+      reprojectedPoints,
+      "push",
+      `Reproject to ${newCrsName}`
+    );
   };
 
   const handleSaveProject = () => {
@@ -120,27 +188,226 @@ export const App: React.FC = () => {
           metadata: proj.metadata,
           points: proj.points,
         },
-        proj.points
+        proj.points,
+        "reset",
+        `Open project: ${proj.projectName}`
       );
     } catch (err: any) {
       alert(`Could not load project: ${err.message}`);
     }
   };
 
+  const handleImportFiles = async (files: File[]) => {
+    setIsLoading(true);
+    setProgress({ pct: 0, stage: "Reading files" });
+    try {
+      // Prepare the GeoPackage WASM engine only when a .gpkg is in the set.
+      if (files.some((f) => f.name.toLowerCase().endsWith(".gpkg"))) {
+        setProgress({ pct: 5, stage: "Loading GeoPackage engine" });
+        await ensureGpkgBrowserLoader();
+      }
+      const result = await ingestFiles(files);
+
+      // Working CRS for imports (matches importedMetadata below).
+      const WORKING_EPSG = 21037;
+      let points = result.points;
+      if (result.sourceCrs) {
+        const src = result.sourceCrs;
+        const needsTransform =
+          (src.epsg !== null && src.epsg !== WORKING_EPSG) || src.epsg === null;
+        if (needsTransform && points.length > 0) {
+          setProgress({ pct: 12, stage: "Reprojecting to working CRS" });
+          if (src.epsg === null) {
+            // Unregistered WKT definition — transform from the raw proj4 string.
+            const def = src.proj4;
+            points = points.map((p) => {
+              const [e, n] = transformFromDef(def, WORKING_EPSG, p.easting, p.northing);
+              return { ...p, easting: Number(e.toFixed(4)), northing: Number(n.toFixed(4)) };
+            });
+          } else {
+            const def = getCRS(src.epsg);
+            if (def) registerCrsDefinition(def, false);
+            points = points.map((p) => {
+              const [e, n] = transform(src.epsg!, WORKING_EPSG, p.easting, p.northing);
+              return { ...p, easting: Number(e.toFixed(4)), northing: Number(n.toFixed(4)) };
+            });
+          }
+          result.warnings.push(
+            `Reprojected ${points.length} vertices from ${src.name}${src.epsg ? ` (EPSG:${src.epsg})` : ""} to the working CRS.`,
+          );
+        }
+      }
+
+      const importedMetadata = {
+        id: "IMPORT-01",
+        title: result.layerName,
+        locality: "Imported dataset",
+        country: "—",
+        crs: "Arc 1960 / UTM zone 37S",
+        surveyorName: "Imported source",
+        registrationNo: "IMPORT",
+        date: new Date().toISOString().split("T")[0],
+        scale: "1:1,000",
+        organization: "MetaRDU GIS Workstation",
+      };
+      await executePipeline(
+        { ...(selectedScenario as BenchmarkScenario), metadata: importedMetadata, points: [] },
+        points,
+        "reset",
+        `Import: ${result.layerName}`
+      );
+      if (result.warnings.length > 0) {
+        alert(`Imported with notes:\n\n${result.warnings.join("\n")}`);
+      }
+    } catch (err: any) {
+      alert(`Import failed: ${err?.message ?? err}`);
+    } finally {
+      setIsLoading(false);
+      setProgress(null);
+    }
+  };
+
+  /** PostGIS layer import — same reset-document path as file imports. */
+  const handlePostgisImport = async (
+    points: SurveyPoint[],
+    layerName: string,
+    srid: number,
+    notes: string[],
+  ) => {
+    const WORKING_EPSG = 21037;
+    let pts = points;
+    const warnings = [...notes];
+    if (srid && srid !== WORKING_EPSG && pts.length > 0) {
+      setIsLoading(true);
+      setProgress({ pct: 20, stage: "Reprojecting PostGIS layer" });
+      try {
+        const def = getCRS(srid);
+        if (def) registerCrsDefinition(def, false);
+        pts = pts.map((p) => {
+          const [e, n] = transform(srid, WORKING_EPSG, p.easting, p.northing);
+          return { ...p, easting: Number(e.toFixed(4)), northing: Number(n.toFixed(4)) };
+        });
+        warnings.push(`Reprojected ${pts.length} vertices from EPSG:${srid} to the working CRS.`);
+      } finally {
+        setIsLoading(false);
+        setProgress(null);
+      }
+    }
+    const metadata = {
+      id: "PG-01",
+      title: layerName,
+      locality: "PostGIS source",
+      country: "—",
+      crs: "Arc 1960 / UTM zone 37S",
+      surveyorName: "PostGIS bridge (read-only)",
+      registrationNo: `SRID-${srid || "NA"}`,
+      date: new Date().toISOString().split("T")[0],
+      scale: "1:1,000",
+      organization: "MetaRDU GIS Workstation",
+    };
+    await executePipeline(
+      { ...(selectedScenario as BenchmarkScenario), metadata, points: [] },
+      pts,
+      "reset",
+      `PostGIS import: ${layerName}`,
+    );
+    if (warnings.length > 0) {
+      alert(`PostGIS import notes:\n\n${warnings.join("\n")}`);
+    }
+  };
+
+  /**
+   * OSINT import — Overpass features arrive as WGS84 lon/lat vertices;
+   * reproject into the ACTIVE working CRS (not a hardcoded zone) so the
+   * context lands next to the surveyed geometry.
+   */
+  const handleOsintImport = async (points: SurveyPoint[], layerName: string, notes: string[]) => {
+    const targetEpsg = pipelineResult
+      ? crsEpsgFromMetadata(pipelineResult.metadata.crs)
+      : 21037;
+    const targetName = pipelineResult?.metadata.crs ?? "Arc 1960 / UTM zone 37S";
+    setIsLoading(true);
+    setProgress({ pct: 20, stage: "Reprojecting OSINT context" });
+    const warnings = [...notes];
+    try {
+      const pts = points.map((p) => {
+        const [e, n] = transform(4326, targetEpsg, p.easting, p.northing);
+        return { ...p, easting: Number(e.toFixed(4)), northing: Number(n.toFixed(4)) };
+      });
+      warnings.push(`Reprojected ${pts.length} vertices from WGS84 (EPSG:4326) to the working CRS.`);
+      const metadata = {
+        id: "OSINT-01",
+        title: layerName,
+        locality: "Open-source intelligence context",
+        country: "—",
+        crs: targetName,
+        surveyorName: "OSM via Overpass API (ODbL)",
+        registrationNo: "OSM-ODBL",
+        date: new Date().toISOString().split("T")[0],
+        scale: "1:1,000",
+        organization: "MetaRDU GIS Workstation",
+      };
+      await executePipeline(
+        { ...(selectedScenario as BenchmarkScenario), metadata, points: [] },
+        pts,
+        "reset",
+        `OSINT import: ${layerName}`,
+      );
+      if (warnings.length > 0) {
+        alert(`OSINT import notes:\n\n${warnings.join("\n")}`);
+      }
+    } finally {
+      setIsLoading(false);
+      setProgress(null);
+    }
+  };
+
+  /**
+   * Document extent in WGS84 lon/lat — the OSINT query scope. Computed from
+   * the point cloud bounds (padded 10%), corner-reprojected into EPSG:4326.
+   */
+  const wgs84Bbox = useMemo<OverpassBbox | null>(() => {
+    if (!pipelineResult || pipelineResult.points.length === 0) return null;
+    const epsg = crsEpsgFromMetadata(pipelineResult.metadata.crs);
+    let minE = Infinity, minN = Infinity, maxE = -Infinity, maxN = -Infinity;
+    for (const p of pipelineResult.points) {
+      if (p.easting < minE) minE = p.easting;
+      if (p.easting > maxE) maxE = p.easting;
+      if (p.northing < minN) minN = p.northing;
+      if (p.northing > maxN) maxN = p.northing;
+    }
+    const dE = (maxE - minE) * 0.1 || 10; // degenerate extents still get context
+    const dN = (maxN - minN) * 0.1 || 10;
+    const sw = transform(epsg, 4326, minE - dE, minN - dN);
+    const ne = transform(epsg, 4326, maxE + dE, maxN + dN);
+    return {
+      lonMin: Math.min(sw[0], ne[0]),
+      latMin: Math.min(sw[1], ne[1]),
+      lonMax: Math.max(sw[0], ne[0]),
+      latMax: Math.max(sw[1], ne[1]),
+    };
+  }, [pipelineResult]);
+
+  const handleCursorReadout = useCallback((c: CursorReadout | null) => setCursor(c), []);
+  const handleScaleChange = useCallback((s: number) => setScaleDenominator(s), []);
+
   if (!pipelineResult) {
     return (
-      <div className="w-screen h-screen bg-[#0B0F17] flex items-center justify-center text-slate-100 font-mono">
+      <div className="w-screen h-screen bg-app flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs text-slate-400">INITIALIZING METARDU AUTONOMOUS GIS WORKSTATION...</span>
+          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          <span className="ui-label">{progress ? `${progress.stage}…` : "Initializing workspace"}</span>
         </div>
       </div>
     );
   }
 
+  const activeEpsg = crsEpsgFromMetadata(pipelineResult.metadata.crs);
+  const activeCrsDef = getCRS(activeEpsg);
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#0B0F17] text-slate-100 overflow-hidden font-['Plus_Jakarta_Sans'] select-none">
-      {/* Top Application Header */}
+    <div className="flex flex-col h-screen w-screen bg-app text-ink overflow-hidden">
+      {/* Top application chrome */}
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -153,16 +420,33 @@ export const App: React.FC = () => {
         onCrsChange={handleCrsChange}
         onSaveProject={handleSaveProject}
         onOpenProjectFile={handleOpenProjectFile}
+        onImportFiles={handleImportFiles}
+        onUndo={doc.undo}
+        onRedo={doc.redo}
+        canUndo={doc.canUndo}
+        canRedo={doc.canRedo}
+        undoLabel={doc.undoLabel}
+        redoLabel={doc.redoLabel}
       />
 
-      {/* Real-time Sub-Second Pipeline Telemetry Bar */}
-      <PipelineTelemetryBar
-        telemetries={pipelineResult.telemetries}
-        totalDurationMs={pipelineResult.totalDurationMs}
-      />
-
-      {/* Main Workspace Tabs */}
-      <main className="flex-1 relative overflow-hidden">
+      {/* Workspace */}
+      <main className="flex-1 min-h-0 relative overflow-hidden">
+        {isLoading && progress && (
+          <div
+            className="absolute inset-x-0 top-0 z-50 flex items-center gap-2 bg-panel border-b border-line px-3 h-6"
+            title={`Pipeline stage ${progress.pct}%`}
+          >
+            <div className="flex-1 h-1 bg-line rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent transition-all duration-200"
+                style={{ width: `${Math.max(progress.pct, 4)}%` }}
+              />
+            </div>
+            <span className="text-[10px] text-ink-2 tnum whitespace-nowrap">
+              {progress.pct}% — {progress.stage}
+            </span>
+          </div>
+        )}
         {activeTab === "canvas2d" && (
           <MapCanvas2D
             result={pipelineResult}
@@ -172,6 +456,9 @@ export const App: React.FC = () => {
                 prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
               );
             }}
+            onCursorReadout={handleCursorReadout}
+            onScaleChange={handleScaleChange}
+            focusWgs84={focusWgs84}
           />
         )}
         {activeTab === "terrain3d" && <TerrainViewer3D result={pipelineResult} />}
@@ -179,7 +466,10 @@ export const App: React.FC = () => {
           <McdaSuitabilityPanel
             result={pipelineResult}
             onUpdateSuitability={(newCells) =>
-              setPipelineResult((prev) => (prev ? { ...prev, suitability: newCells } : prev))
+              doc.push(
+                pipelineResult ? { ...pipelineResult, suitability: newCells } : pipelineResult,
+                "Recompute suitability (MCDA)"
+              )
             }
           />
         )}
@@ -188,24 +478,73 @@ export const App: React.FC = () => {
           <EnergyPlanningPanel
             result={pipelineResult}
             onUpdateClusters={(newClusters) =>
-              setPipelineResult((prev) => (prev ? { ...prev, energyClusters: newClusters } : prev))
+              doc.push(
+                pipelineResult ? { ...pipelineResult, energyClusters: newClusters } : pipelineResult,
+                "Re-plan electrification"
+              )
             }
           />
         )}
         {activeTab === "deedplan" && <DeedPlanViewer result={pipelineResult} />}
         {activeTab === "atlas" && <PlanningAtlasViewer result={pipelineResult} />}
+        {activeTab === "atlas-series" && <AtlasSeriesPanel result={pipelineResult} />}
+        {activeTab === "composer" && <ComposerPanel result={pipelineResult} />}
+        {activeTab === "postgis" && (
+          <PostgisPanel onImportPoints={handlePostgisImport} />
+        )}
+        {activeTab === "osint" && (
+          <OsintPanel wgs84Bbox={wgs84Bbox} onImportPoints={handleOsintImport} onLocate={handleLocate} />
+        )}
+        {activeTab === "dem" && <DemPanel wgs84Bbox={wgs84Bbox} />}
+        {activeTab === "provenance" && <ProvenancePanel result={pipelineResult} />}
+        {activeTab === "traverse" && (
+          <TraversePanel
+            result={pipelineResult}
+            onApplyPoints={(pts) => executePipeline(selectedScenario, pts, "push", "Apply adjusted traverse")}
+          />
+        )}
+        {activeTab === "scenarios" && (
+          <ScenarioComparePanel result={pipelineResult} activeWeights={DEFAULT_MCDA_WEIGHTS} />
+        )}
+        {activeTab === "sync" && (
+          <SyncPanel
+            result={pipelineResult}
+            onApplyProject={(proj) =>
+              executePipeline(
+                { ...(selectedScenario as BenchmarkScenario), metadata: proj.metadata, points: [] },
+                proj.points,
+                "push",
+                `Edge sync merge: ${proj.projectName}`,
+              )
+            }
+          />
+        )}
         {activeTab === "datagrid" && (
           <AttributeTable
             result={pipelineResult}
             selectedPointIds={selectedPointIds}
             onSelectPoints={setSelectedPointIds}
             onUploadCustomSurvey={handleUploadCustomSurvey}
-            onUpdatePoints={(pts) => executePipeline(selectedScenario, pts)}
+            onUpdatePoints={(pts) => executePipeline(selectedScenario, pts, "push", "Edit survey points")}
           />
         )}
       </main>
 
-      {/* 1-Click Export Hub Modal */}
+      {/* Persistent instrument strip */}
+      <StatusBar
+        cursor={activeTab === "canvas2d" ? cursor : null}
+        scaleDenominator={scaleDenominator}
+        epsg={activeEpsg}
+        crsName={activeCrsDef?.name ?? pipelineResult.metadata.crs}
+        featureCount={pipelineResult.points.length}
+        selectedCount={selectedPointIds.length}
+        scenarioTitle={pipelineResult.metadata.title}
+        telemetries={pipelineResult.telemetries}
+        totalDurationMs={pipelineResult.totalDurationMs}
+        geoidStatus={geoidStatus}
+      />
+
+      {/* Export hub */}
       {isExportOpen && (
         <ExportHubModal result={pipelineResult} onClose={() => setIsExportOpen(false)} />
       )}

@@ -5,6 +5,7 @@
  */
 
 import { SurveyPoint, EnergyCluster, SurveyVector, OffGridPlannerParams } from "../types/spatial";
+import { UniformGridIndex } from "./spatial-index";
 
 export const DEFAULT_OFFGRID_PARAMS: OffGridPlannerParams = {
   costPerKwSolar: 1100, // USD per kWp
@@ -30,10 +31,18 @@ export function modelEnergyClusters(
 
   const gridVectors = vectors.filter((v) => v.category === "utility" || v.code === "PWR" || v.code === "GRID");
 
-  // Spatial clustering (group points within 250m radius)
+  // Spatial clustering (group points within 250m radius).
+  // Anchor-greedy, seeded in survey order — identical semantics to the
+  // legacy O(n²) pair scan, but the candidate sweep is an indexed radius
+  // query so large settlement datasets stay interactive.
   const CLUSTER_DIST = 250;
   const clusters: SurveyPoint[][] = [];
   const visited = new Set<string>();
+  const settlementIndex = new UniformGridIndex(
+    settlementPts,
+    (p) => ({ x: p.easting, y: p.northing }),
+    CLUSTER_DIST
+  );
 
   for (let i = 0; i < settlementPts.length; i++) {
     const p1 = settlementPts[i];
@@ -42,9 +51,9 @@ export function modelEnergyClusters(
     const currentCluster: SurveyPoint[] = [p1];
     visited.add(p1.id);
 
-    for (let j = i + 1; j < settlementPts.length; j++) {
-      const p2 = settlementPts[j];
-      if (visited.has(p2.id)) continue;
+    const candidates = settlementIndex.radius(p1.easting, p1.northing, CLUSTER_DIST);
+    for (const p2 of candidates) {
+      if (p2.id === p1.id || visited.has(p2.id)) continue;
 
       const d = Math.hypot(p1.easting - p2.easting, p1.northing - p2.northing);
       if (d < CLUSTER_DIST) {
@@ -55,6 +64,11 @@ export function modelEnergyClusters(
 
     clusters.push(currentCluster);
   }
+
+  const gridVertexIndex = new UniformGridIndex(
+    gridVectors.flatMap((gv) => gv.points),
+    (p) => ({ x: p.easting, y: p.northing })
+  );
 
   const results: EnergyCluster[] = [];
   let clusterId = 1;
@@ -76,16 +90,11 @@ export function modelEnergyClusters(
       if (d > maxR) maxR = d;
     }
 
-    // Distance to nearest grid line
+    // Distance to nearest grid line vertex (indexed nearest-neighbour query)
     let minDistM = 8500; // default 8.5km if no grid vector in survey
     if (gridVectors.length > 0) {
-      minDistM = Infinity;
-      for (const gv of gridVectors) {
-        for (const gp of gv.points) {
-          const d = Math.hypot(centroidX - gp.easting, centroidY - gp.northing);
-          if (d < minDistM) minDistM = d;
-        }
-      }
+      const hit = gridVertexIndex.nearest(centroidX, centroidY);
+      minDistM = hit ? hit.dist : 8500;
     }
     const gridDistanceKm = Number((minDistM / 1000).toFixed(2));
 
