@@ -402,6 +402,7 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
 
   const saveFirmsKey = (key: string) => {
     setFirmsKey(key);
+    setFirmsError(null); // a fresh key invalidates the previous failure
     if (typeof localStorage !== "undefined") localStorage.setItem(MAPKEY_STORAGE_KEY, key);
   };
 
