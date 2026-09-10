@@ -83,4 +83,40 @@ assert.ok(Math.abs(resolutionAtZoom(5) * 32 - resolutionAtZoom(0)) < 1e-6);
   assert.strictEqual(lru.size, 3);
 }
 
+/* OSINT basemap providers — Sentinel-2 cloudless (EOX) and OpenTopoMap */
+{
+  // Registry exposes all four providers with coherent zoom ranges
+  const ids = Object.keys(TILE_PROVIDERS).sort();
+  assert.deepStrictEqual(ids, ["esri-imagery", "opentopo", "osm", "s2-cloudless"]);
+  for (const p of Object.values(TILE_PROVIDERS)) {
+    assert.ok(p.minZoom < p.maxZoom, `${p.id}: minZoom < maxZoom`);
+    assert.ok(p.attribution.length > 0, `${p.id}: attribution present`);
+    assert.ok(p.label.length > 0, `${p.id}: label present`);
+  }
+
+  // Sentinel-2: EOX WMTS REST path is TileMatrixSet/z/row/col (y before x)
+  const s2 = TILE_PROVIDERS["s2-cloudless"];
+  assert.strictEqual(
+    s2.url(14, 9227, 9288),
+    "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/14/9288/9227.jpg",
+  );
+  assert.ok(s2.attribution.includes("Copernicus"), "S2 attribution credits Copernicus");
+
+  // OpenTopoMap: standard XYZ with x before y
+  const ot = TILE_PROVIDERS.opentopo;
+  assert.strictEqual(
+    ot.url(13, 4613, 4644),
+    "https://tile.opentopomap.org/13/4613/4644.png",
+  );
+  assert.ok(ot.attribution.includes("CC-BY-SA"), "Topo attribution carries the style license");
+
+  // Sentinel-2 native ceiling: a survey-scale request clamps to maxZoom 15
+  // (canvas overzooms by reusing z15 tiles — never fabricates detail)
+  const z15 = pickTileZoom(0.5, -1.29, s2.minZoom, s2.maxZoom);
+  assert.strictEqual(z15, s2.maxZoom, "0.5 m/px clamps to the S2 native ceiling");
+  const spans = tilesForViewport(s2, 0.5, [36.7, -1.4, 36.95, -1.2]);
+  assert.ok(spans.length > 0 && spans.length <= 48, `S2 spans ${spans.length}`);
+  for (const s of spans) assert.ok(s.z <= s2.maxZoom, "S2 zoom never exceeds native max");
+}
+
 console.log("tiles.test.ts: all assertions passed");

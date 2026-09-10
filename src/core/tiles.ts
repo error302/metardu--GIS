@@ -10,7 +10,7 @@
  */
 
 export interface TileProvider {
-  id: "osm" | "esri-imagery";
+  id: "osm" | "esri-imagery" | "s2-cloudless" | "opentopo";
   label: string;
   /** XYZ template; {z} {x} {y} with y already top-origin */
   url: (z: number, x: number, y: number) => string;
@@ -35,6 +35,32 @@ export const TILE_PROVIDERS: Record<TileProvider["id"], TileProvider> = {
       `https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`,
     attribution: "Esri, Maxar, Earthstar Geographics",
     maxZoom: 19,
+    minZoom: 2,
+  },
+  /* Sentinel-2 cloudless mosaic (EOX) — open satellite basemap built from
+     modified Copernicus Sentinel-2 data. Native resolution ~10 m/px (z15);
+     the canvas overzooms beyond that. Useful where commercial imagery is
+     stale — the mosaic is re-processed annually. */
+  "s2-cloudless": {
+    id: "s2-cloudless",
+    label: "Sentinel-2",
+    // EOX WMTS REST path is TileMatrixSet/z/row/col ("g" = GoogleMapsCompatible).
+    url: (z, x, y) =>
+      `https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2020_3857/default/g/${z}/${y}/${x}.jpg`,
+    attribution:
+      "Sentinel-2 cloudless by EOX IT Services (contains modified Copernicus Sentinel data)",
+    maxZoom: 15,
+    minZoom: 2,
+  },
+  /* OpenTopoMap — topographic cartography (contours, relief shading, trails)
+     rendered from OSM + SRTM. Context layer for planning reconnaissance;
+     CC-BY-SA style, be gentle: the public renderer asks for modest load. */
+  opentopo: {
+    id: "opentopo",
+    label: "Topo",
+    url: (z, x, y) => `https://tile.opentopomap.org/${z}/${x}/${y}.png`,
+    attribution: "© OpenStreetMap contributors, SRTM | style: © OpenTopoMap (CC-BY-SA)",
+    maxZoom: 17,
     minZoom: 2,
   },
 };

@@ -25,12 +25,14 @@ interface MapCanvas2DProps {
   onScaleChange?: (scaleDenominator: number) => void;
 }
 
-export type BasemapMode = "dark" | "osm" | "imagery" | "viirs" | "cad";
+export type BasemapMode = "dark" | "osm" | "imagery" | "sentinel2" | "topo" | "viirs" | "cad";
 
 /** Basemaps backed by live XYZ tiles (offline fallback to procedural below). */
 const TILE_BASEMAPS: Partial<Record<BasemapMode, TileProvider>> = {
   osm: TILE_PROVIDERS.osm,
   imagery: TILE_PROVIDERS["esri-imagery"],
+  sentinel2: TILE_PROVIDERS["s2-cloudless"],
+  topo: TILE_PROVIDERS.opentopo,
 };
 
 /** Shared tile service — persistent Cache API + LRU + bounded concurrency. */
@@ -60,6 +62,8 @@ const BASEMAP_BG: Record<BasemapMode, string> = {
   dark: "#161619",
   osm: "#e9e6e2", // light fallback tint for offline Streets mode
   imagery: "#15181a",
+  sentinel2: "#101413", // muted green-gray while S2 tiles decode
+  topo: "#e8e4da", // warm topo-paper fallback tint
   viirs: "#0a0a0d",
   cad: "#f7f7f5",
 };
@@ -155,7 +159,8 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
 
   const isCad = basemap === "cad";
   const tileProvider = TILE_BASEMAPS[basemap] ?? null;
-  const isOsmLight = basemap === "osm"; // light backdrop flips graticule/label ink
+  // Light cartographic backdrops (Streets, Topo) flip graticule/label ink
+  const isOsmLight = basemap === "osm" || basemap === "topo";
 
   // Stable signature of layer visibility for the static-cache key
   const layersSig = useMemo(() => JSON.stringify(layers), [layers]);
@@ -1103,7 +1108,9 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   const basemapOptions: { id: BasemapMode; label: string }[] = [
     { id: "dark", label: "Dark" },
     { id: "osm", label: "Streets" },
+    { id: "topo", label: "Topo" },
     { id: "imagery", label: "Aerial" },
+    { id: "sentinel2", label: "Sentinel-2" },
     { id: "viirs", label: "Night" },
     { id: "cad", label: "CAD" },
   ];
