@@ -95,7 +95,7 @@ The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in 
 * **Benchmark harness** with hard, CI-exitable budgets over deterministic 10k/50k synthetic scenarios (`npm run bench`).
 * **Machine-readable provenance graph** (FNV-1a digest, tamper-evident) embedded in every export—each figure carries its method citation, resolved inputs, and stated tolerance.
 * **Edge-first CRDT** (LWW registers + add-wins sets) for offline-first multi-device project sync, with an optional zero-dependency LAN relay.
-* **Live ground truth, offline-first:** XYZ raster basemaps (OSM / Esri / Sentinel-2 cloudless / OpenTopoMap) with Cache-API persistence, the official NGA EGM2008 2.5′ geoid grid for East Africa, and Terrarium terrain-tile DEM probes.
+* **Live ground truth, offline-first:** XYZ raster basemaps (OSM / Esri / Sentinel-2 cloudless / OpenTopoMap) with Cache-API persistence, the official NGA EGM2008 2.5′ geoid grid for East Africa, Terrarium terrain-tile DEM probes, and Copernicus DEM GLO-30 regional grids (in-browser GeoTIFF reader, Planetary Computer crop endpoint).
 
 ### 10. Print Composer (Desktop-Grade Cartography)
 * Versioned template schema (ISO A4–A1, mm geometry) with 13 composable element kinds: map frames (fit or fixed 1:N), computed tables, KPI strips, legends, method-note provenance, locator insets, certification and signoff blocks.
@@ -111,8 +111,11 @@ The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in 
 ### 12. OSINT Ground Context (Open-Source Intelligence)
 * **Overpass connector:** query OpenStreetMap around the working extent (document bbox reprojected to WGS84, padding radius 1–25 km, 1°-per-axis area cap) for five feature presets — buildings, roads & tracks, watercourses, land use, named places. Deterministic query builder, `out geom` inline parsing, and endpoint failover (overpass-api.de → kumi mirror) with a 30 s timeout.
 * **Import parity:** OSM features land as coded survey vertices (`place/building/highway/waterway/landuse` tag priority, names carried into descriptions, bounded 14-tag attribute subset, stable `OSM-n<id>`/`-w<id>-v<n>` ids) and are reprojected from WGS84 into the **active** working CRS — the canvas, attribute table, MCDA, and composer treat them like any imported layer. A 10.4 × 10.4 km Nairobi pull (~20,000 features → ~149k vertices) runs the full pipeline in ~2.5 s.
-* **Honesty contract:** relations are counted, never partially assembled; unresolved ways are disclosed; OSM is labeled *indicative context — NOT survey-grade* in the UI, the import notes, and every provenance graph.
-* **Chain of custody:** every fetch is recorded in a session provenance registry (service, endpoint, license ODbL, attribution, timestamp, feature count, scope) that flows into the provenance graph as `src:external-*` nodes — embedded in GeoJSON, LandXML, GeoPackage, and lodgement exports.
+* **Regional terrain (Copernicus DEM GLO-30):** one-click 30 m elevation grid around the job through the Planetary Computer Data API crop endpoint (open CORS, no credentials): uncompressed float32 GeoTIFFs decoded in-browser (dependency-free reader), per-tile crops mosaicked into one WGS84 grid, query window padded to ≥ 3 km and resampling disclosed when the pixel cap bites. The Regional Terrain panel reports elevation statistics, Horn slope distribution, an along-axis terrain profile, and 20 m marching-squares contours with the document extent overlaid — regional raster context, never a statutory elevation source.
+* **Place locate (Nominatim):** forward geocoding with a client-side 1 request/second floor (OSMF policy); a result reframes the 2D canvas to the combined document + place extent (1.6 km floor, 1:500 cap) with an amber focus marker, so the place is always seen relative to the job. Each search lands in the provenance registry.
+* **Jurisdictional context (geoBoundaries):** ADM0/1/2 administrative geometry for any ISO-3 country, metadata license + year recorded verbatim, geometry fetched CORS-direct (GitHub LFS media host with published-URL fallback) and clipped at ring level — a county containing the job is kept whole rather than dropped by vertex filtering. Imports as boundary-category coded vertices with full clipped/truncated disclosure.
+* **Honesty contract:** relations are counted, never partially assembled; unresolved ways are disclosed; OSM, DEM rasters and open boundaries are labeled *indicative context — NOT survey-grade* in the UI, the import notes, and every provenance graph.
+* **Chain of custody:** every fetch — Overpass, GLO-30 tiles, Nominatim searches, boundary downloads — is recorded in a session provenance registry (service, endpoint, license, attribution, timestamp, feature count, scope) that flows into the provenance graph as `src:external-*` nodes — embedded in GeoJSON, LandXML, GeoPackage, and lodgement exports.
 * **Open basemaps:** Sentinel-2 cloudless mosaic (EOX, modified Copernicus data, ~10 m/px) and OpenTopoMap (OSM+SRTM, CC-BY-SA) join OSM and Esri imagery as XYZ basemaps with persistent offline caching and on-canvas attribution.
 
 ---
@@ -132,10 +135,10 @@ The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in 
 
 ## Test Suite & Verification
 
-Twenty-one test suites verify geodetic accuracy, parser robustness, mathematical precision, spatial-index parity against brute force, Shapefile byte roundtrips, GeoPackage writer conformance, WKT CRS parsing, EWKB reading, provenance integrity (including OSINT chain of custody), CRDT convergence, GEOS-parity corridor geometry, and Overpass connector behavior (query determinism, parse mapping, endpoint failover):
+Twenty-five test suites verify geodetic accuracy, parser robustness, mathematical precision, spatial-index parity against brute force, Shapefile byte roundtrips, GeoPackage writer conformance, WKT CRS parsing, EWKB reading, provenance integrity (including OSINT chain of custody), CRDT convergence, GEOS-parity corridor geometry, atlas cartography, and the OSINT surface (Overpass query determinism and failover, Nominatim parsing and rate discipline, geoBoundaries clipping and URL failover, GLO-30 GeoTIFF decoding against byte-exact fixtures, and DEM analysis against analytic ramps):
 
 ```bash
-# Run all 21 test suites
+# Run all 25 test suites
 npm test
 
 # Performance benchmarks (hard budgets, CI-exitable)

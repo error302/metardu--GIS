@@ -135,13 +135,31 @@ survey-grade**. The rules now in force:
    treats them as data.
 5. **License hygiene** — ODbL attribution and the CC-BY-SA/OpenTopoMap
    and EOX/Copernicus credits render on-canvas and in panel disclosures.
+6. **Scope honesty for geometry matching** — boundary context clips at
+   RING level (a county containing the job is kept whole; vertex-level
+   bbox filtering would silently drop exactly the jurisdiction that
+   matters), and the DEM query window is padded to ≥ 3 km per axis
+   (a small job at 30 m native resolution would otherwise decode a
+   handful of pixels). Both behaviors are disclosed, not silent.
 
 Delivered on this branch: `src/core/osint/overpass.ts` (query builder,
-parser, tag mapping, failover fetch), `src/core/osint/registry.ts`
-(session evidence registry), `OsintPanel` (scope, presets, preview,
-import), provenance integration, and two open basemaps (Sentinel-2
-cloudless via EOX, OpenTopoMap). Locked by `tests/osint-overpass.test.ts`
-(60+ assertions) and the external-source section of
+parser, tag mapping, failover fetch), `src/core/osint/geocode.ts`
+(Nominatim client with a client-side 1 req/s floor per the OSMF policy),
+`src/core/osint/boundaries.ts` (geoBoundaries gbOpen context: metadata
+license recorded verbatim, CORS-direct GitHub LFS downloads with
+published-URL fallback, ring-level scope clipping, vertex-cap
+disclosure), `src/core/osint/registry.ts` (session evidence registry),
+`OsintPanel` (scope, presets, preview, locate, jurisdictional context,
+import), `src/core/dem/copernicus.ts` + `src/core/dem/analysis.ts`
+(GLO-30 regional grids via the Planetary Computer crop endpoint with a
+dependency-free GeoTIFF reader; Horn slope, terrain profiles, marching-
+squares contours, statistics) with the `DemPanel` analysis sheet,
+provenance integration, canvas focus framing, and two open basemaps
+(Sentinel-2 cloudless via EOX, OpenTopoMap). Locked by
+`tests/osint-overpass.test.ts` (60+ assertions),
+`tests/osint-geocode.test.ts`, `tests/osint-boundaries.test.ts`,
+`tests/dem-copernicus.test.ts` (byte-exact TIFF fixtures),
+`tests/dem-analysis.test.ts`, and the external-source section of
 `tests/provenance.test.ts`.
 
 Deferred (documented scope, not forgotten): Sentinel-2 **change
