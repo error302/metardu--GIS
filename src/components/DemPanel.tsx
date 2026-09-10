@@ -17,6 +17,8 @@ import {
   fetchDemGrid,
   DemFetchResult,
   Bbox,
+  padBboxToMinWindow,
+  DEM_MIN_WINDOW_KM,
   DEM_SERVICE,
   DEM_LICENSE,
   DEM_ATTRIBUTION,
@@ -48,6 +50,9 @@ export const DemPanel: React.FC<DemPanelProps> = ({ wgs84Bbox }) => {
   const [error, setError] = useState<string | null>(null);
 
   const bboxError = wgs84Bbox ? validateBbox(wgs84Bbox) : null;
+  /** Query window = document extent padded to at least DEM_MIN_WINDOW_KM
+      per axis — regional context means the terrain around the job too. */
+  const queryBbox = useMemo(() => (wgs84Bbox ? padBboxToMinWindow(wgs84Bbox) : null), [wgs84Bbox]);
 
   const analysis = useMemo(() => {
     if (!result) return null;
@@ -73,15 +78,15 @@ export const DemPanel: React.FC<DemPanelProps> = ({ wgs84Bbox }) => {
   }, [result]);
 
   const runFetch = async () => {
-    if (!wgs84Bbox || bboxError) return;
+    if (!queryBbox || bboxError) return;
     setFetching(true);
     setError(null);
     setResult(null);
     try {
-      const r = await fetchDemGrid(wgs84Bbox, { targetResM: 30 });
+      const r = await fetchDemGrid(queryBbox, { targetResM: 30 });
       setResult(r);
       const ids = [...new Set(r.tileBytes.map((t) => t.itemId))];
-      const km = ((wgs84Bbox.lonMax - wgs84Bbox.lonMin) * 111.32).toFixed(1);
+      const km = ((queryBbox.lonMax - queryBbox.lonMin) * 111.32).toFixed(1);
       recordExternalSource({
         service: DEM_SERVICE,
         endpoint: r.endpoint,
@@ -133,11 +138,15 @@ export const DemPanel: React.FC<DemPanelProps> = ({ wgs84Bbox }) => {
           <div className="mt-4 bg-panel border border-line-strong rounded-[4px]">
             <div className="px-4 py-3">
               <span className="ui-label">Fetch scope</span>
-              {wgs84Bbox ? (
+              {wgs84Bbox && queryBbox ? (
                 <div className="mt-1.5 space-y-1.5">
                   <p className="text-[11.5px] text-ink-2 tnum">
                     Document extent (WGS84): [{wgs84Bbox.latMin.toFixed(4)}, {wgs84Bbox.lonMin.toFixed(4)}] — [
                     {wgs84Bbox.latMax.toFixed(4)}, {wgs84Bbox.lonMax.toFixed(4)}]
+                  </p>
+                  <p className="text-[11px] text-ink-3 tnum">
+                    Query window padded to ≥{DEM_MIN_WINDOW_KM} km per axis: [{queryBbox.latMin.toFixed(4)}, {queryBbox.lonMin.toFixed(4)}] — [
+                    {queryBbox.latMax.toFixed(4)}, {queryBbox.lonMax.toFixed(4)}]
                   </p>
                   <p className="text-[11px] text-ink-3 leading-relaxed">
                     One 30 m/px crop per intersecting 1° tile, mosaicked client-side.
@@ -149,7 +158,7 @@ export const DemPanel: React.FC<DemPanelProps> = ({ wgs84Bbox }) => {
                       onClick={runFetch}
                       disabled={fetching || !!bboxError}
                       className="ui-btn-accent text-[12px]"
-                      title="Fetch the GLO-30 regional grid for the document extent"
+                      title="Fetch the GLO-30 regional grid for the padded query window"
                     >
                       {fetching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
                       <span>{fetching ? "Fetching…" : "Fetch regional DEM"}</span>

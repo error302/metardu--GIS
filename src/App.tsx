@@ -57,6 +57,13 @@ export const App: React.FC = () => {
   const [cursor, setCursor] = useState<CursorReadout | null>(null);
   const [scaleDenominator, setScaleDenominator] = useState(1000);
 
+  // OSINT locate — recenter the 2D canvas on a searched place.
+  const [focusWgs84, setFocusWgs84] = useState<{ lon: number; lat: number; label?: string } | null>(null);
+  const handleLocate = useCallback((lon: number, lat: number, label: string) => {
+    setFocusWgs84({ lon, lat, label });
+    setActiveTab("canvas2d");
+  }, []);
+
   /**
    * Execute the pipeline through the worker service (main-thread fallback
    * transparent). mode "reset" starts a new document; "push" records an
@@ -450,6 +457,7 @@ export const App: React.FC = () => {
             }}
             onCursorReadout={handleCursorReadout}
             onScaleChange={handleScaleChange}
+            focusWgs84={focusWgs84}
           />
         )}
         {activeTab === "terrain3d" && <TerrainViewer3D result={pipelineResult} />}
@@ -483,7 +491,7 @@ export const App: React.FC = () => {
           <PostgisPanel onImportPoints={handlePostgisImport} />
         )}
         {activeTab === "osint" && (
-          <OsintPanel wgs84Bbox={wgs84Bbox} onImportPoints={handleOsintImport} />
+          <OsintPanel wgs84Bbox={wgs84Bbox} onImportPoints={handleOsintImport} onLocate={handleLocate} />
         )}
         {activeTab === "dem" && <DemPanel wgs84Bbox={wgs84Bbox} />}
         {activeTab === "provenance" && <ProvenancePanel result={pipelineResult} />}

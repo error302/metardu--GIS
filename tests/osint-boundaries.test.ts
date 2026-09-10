@@ -8,6 +8,7 @@
 import * as assert from "assert";
 import {
   fetchBoundaryMetadata,
+  toDirectGeometryUrl,
   fetchBoundaryContext,
   validateIso3,
   GB_SERVICE,
@@ -143,21 +144,48 @@ const GEO = {
 }
 
 {
-  // Clip: keep only what intersects and lies inside the bbox
-  const { impl } = stub(META, GEO);
+  // Clip: ring-level matching — a unit CONTAINING the scope is kept whole
+  // (its vertices sit far outside the bbox; vertex-level filtering would
+  // silently drop exactly the jurisdiction that matters).
+  const GEO2 = {
+    type: "FeatureCollection",
+    features: [
+      ...GEO.features,
+      {
+        type: "Feature",
+        properties: { shapeName: "Nairobi Central", shapeID: "KEN-ADM1-3" },
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [36.0, -1.5],
+              [37.0, -1.5],
+              [37.0, -0.5],
+              [36.0, -0.5],
+              [36.0, -1.5],
+            ],
+          ],
+        },
+      },
+    ],
+  };
+  const { impl } = stub(META, GEO2);
   const clip = { lonMin: 36.55, latMin: -1.45, lonMax: 36.85, latMax: -1.1 };
   const res = await fetchBoundaryContext("KEN", "ADM1", clip, { fetchImpl: impl });
-  // Westlands ring bbox [36..37 x -2..-1] intersects; per-vertex: all 5 outside -> 5 clipped
-  // Dagoretti poly1 [36.5..36.6 x -1.3..-1.2]: (36.5,-1.2) lon out; (36.6,-1.2) in;
-  //   (36.6,-1.3) in; (36.5,-1.2) out -> 2 kept, 2 clipped
-  // poly2 [36.7..36.8 x -1.5..-1.4]: in, in, (36.8,-1.5) lat out, in -> 3 kept, 1 clipped
-  const kept = res.points;
-  assert.strictEqual(kept.length, 5, "expected kept vertices");
-  assert.ok(kept.every((p: SurveyPoint) => p.easting >= clip.lonMin && p.easting <= clip.lonMax));
-  assert.ok(kept.every((p: SurveyPoint) => p.northing >= clip.latMin && p.northing <= clip.latMax));
-  assert.strictEqual(res.clippedVertices, 5 + 2 + 1, "dropped vertices disclosed");
-  assert.ok(res.unitNames.includes("Dagoretti"));
-  assert.ok(!res.unitNames.includes("Westlands"), "fully-clipped unit not listed");
+  // Westlands ring [36..37 x -2..-1] intersects -> kept whole (5)
+  // Dagoretti polys both intersect -> kept whole (4 + 4)
+  // Nairobi Central CONTAINS the clip -> kept whole (5)
+  assert.strictEqual(res.points.length, 18, "all intersecting rings kept whole");
+  assert.strictEqual(res.clippedVertices, 0, "nothing rejected (all rings intersect)");
+  assert.ok(res.unitNames.includes("Nairobi Central"), "containing unit kept");
+  assert.deepStrictEqual(res.unitNames.sort(), ["Dagoretti", "Nairobi Central", "Westlands"]);
+
+  // A scope far away rejects everything, disclosed
+  const far = { lonMin: 10, latMin: 0, lonMax: 11, latMax: 1 };
+  const res2 = await fetchBoundaryContext("KEN", "ADM1", far, { fetchImpl: impl });
+  assert.strictEqual(res2.points.length, 0);
+  assert.strictEqual(res2.clippedVertices, 18, "all vertices counted as clipped");
+  assert.strictEqual(res2.unitNames.length, 0);
 }
 
 {
@@ -174,6 +202,55 @@ const GEO = {
   await assert.rejects(
     fetchBoundaryContext("KEN", "ADM1", null, { fetchImpl: impl }),
     /not a GeoJSON FeatureCollection/,
+  );
+}
+
+/* ---------------- geometry URL rewrite ---------------- */
+
+{
+  const original = "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/KEN/ADM1/geoBoundaries-KEN-ADM1_simplified.geojson";
+  const urls = toDirectGeometryUrl(original);
+  assert.strictEqual(urls.length, 3, "media + raw + published candidates");
+  assert.strictEqual(
+    urls[0],
+    "https://media.githubusercontent.com/media/wmgeolab/geoBoundaries/9469f09/releaseData/gbOpen/KEN/ADM1/geoBoundaries-KEN-ADM1_simplified.geojson",
+    "LFS media host first",
+  );
+  assert.ok(urls[1].startsWith("https://raw.githubusercontent.com/wmgeolab/geoBoundaries/9469f09/"));
+  assert.strictEqual(urls[2], original, "published URL kept as last resort");
+  assert.deepStrictEqual(
+    toDirectGeometryUrl("https://example.test/x.geojson"),
+    ["https://example.test/x.geojson"],
+    "non-github URLs pass through",
+  );
+}
+
+{
+  // Fallback: rewritten host 404s, published URL serves the geometry
+  const calls: string[] = [];
+  const impl = (async (url: string | URL | Request) => {
+    const u = String(url);
+    calls.push(u);
+    if (u.includes("/api/current/")) return new Response(JSON.stringify(META), { status: 200 });
+    if (u.includes("media.githubusercontent.com")) return new Response("not found", { status: 404 });
+    return new Response(JSON.stringify(GEO), { status: 200 });
+  }) as typeof fetch;
+  const ghMeta = {
+    boundaryId: "KEN-ADM1-32016919",
+    iso: "KEN",
+    adm: "ADM1" as const,
+    year: "2020",
+    license: "Public Domain",
+    simplifiedUrl:
+      "https://github.com/wmgeolab/geoBoundaries/raw/9469f09/releaseData/gbOpen/KEN/ADM1/geoBoundaries-KEN-ADM1_simplified.geojson",
+    metadataUrl: "https://www.geoboundaries.org/api/current/gbOpen/KEN/ADM1/",
+  };
+  const res = await fetchBoundaryContext("ken", "ADM1", null, { fetchImpl: impl, metadata: ghMeta });
+  assert.strictEqual(res.points.length, 13, "geometry parsed after fallback");
+  assert.ok(calls.some((c) => c.includes("media.githubusercontent.com")), "direct host tried first");
+  assert.ok(
+    calls.some((c) => c.includes("raw.githubusercontent.com") || c.includes("github.com/wmgeolab")),
+    "second candidate served the geometry after the first failed",
   );
 }
 

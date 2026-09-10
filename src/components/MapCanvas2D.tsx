@@ -23,6 +23,8 @@ interface MapCanvas2DProps {
   onSelectPoint?: (id: string) => void;
   onCursorReadout?: (c: CursorReadout | null) => void;
   onScaleChange?: (scaleDenominator: number) => void;
+  /** WGS84 point to center the viewport on (OSINT place search / locate). */
+  focusWgs84?: { lon: number; lat: number; label?: string } | null;
 }
 
 export type BasemapMode = "dark" | "osm" | "imagery" | "sentinel2" | "topo" | "viirs" | "cad";
@@ -81,6 +83,7 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   onSelectPoint,
   onCursorReadout,
   onScaleChange,
+  focusWgs84 = null,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   // Renderer v2: static-scene cache (basemap..energy layers) blitted under the
@@ -228,6 +231,37 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
   useEffect(() => {
     handleFitBounds();
   }, [bounds]);
+
+  // Locate — frame BOTH the focus point and the document, so the searched
+  // place is always seen in context of the job (never loses the survey).
+  // The view is at least a ~1.6 km-wide window and never zooms past 1:500.
+  const focusRef = useRef<{ lon: number; lat: number; label?: string } | null>(null);
+  useEffect(() => {
+    focusRef.current = focusWgs84;
+    if (!focusWgs84 || !canvasRef.current) return;
+    const [e, n] = fromWGS84(activeEpsg, focusWgs84.lon, focusWgs84.lat);
+    if (!Number.isFinite(e) || !Number.isFinite(n)) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const cw = rect.width || 900;
+    const ch = rect.height || 600;
+
+    // Combined extent: document bounds ∪ focus point
+    const minE = Math.min(bounds.minE, e);
+    const maxE = Math.max(bounds.maxE, e);
+    const minN = Math.min(bounds.minN, n);
+    const maxN = Math.max(bounds.maxN, n);
+    const spanE = Math.max(maxE - minE, 1600); // floor: ~1.6 km window
+    const spanN = Math.max(maxN - minN, 1600);
+
+    const pad = 1.35;
+    const z = Math.min(cw / (spanE * pad), ch / (spanN * pad));
+    const zoomCapped = Math.min(Math.max(z, cw / (1600 * pad * 4)), 7.55); // ≤ ~1:500 at 96 dpi
+    setZoom(zoomCapped);
+    setPan({
+      x: cw / 2 - ((minE + maxE) / 2) * zoomCapped,
+      y: ch / 2 + ((minN + maxN) / 2) * zoomCapped,
+    });
+  }, [focusWgs84]);
 
   // Report view scale to the global status bar (96 dpi assumption)
   useEffect(() => {
@@ -718,6 +752,40 @@ export const MapCanvas2D: React.FC<MapCanvas2DProps> = ({
           ctx.strokeStyle = isCad ? "#ffffff" : "#161619";
           ctx.lineWidth = 1;
           ctx.stroke();
+        }
+      }
+
+      /* OSINT locate marker — pulsing-ring + label at the searched place. */
+      const focus = focusRef.current;
+      if (focus && !isCad) {
+        const [fe, fn] = fromWGS84(activeEpsg, focus.lon, focus.lat);
+        if (Number.isFinite(fe) && Number.isFinite(fn)) {
+          const fsx = toScreenX(fe);
+          const fsy = toScreenY(fn);
+          ctx.beginPath();
+          ctx.arc(fsx, fsy, 9, 0, 2 * Math.PI);
+          ctx.strokeStyle = C.selected;
+          ctx.lineWidth = 1.6;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(fsx, fsy, 2.6, 0, 2 * Math.PI);
+          ctx.fillStyle = C.selected;
+          ctx.fill();
+          if (focus.label) {
+            ctx.font = "10.5px 'IBM Plex Sans', sans-serif";
+            const tw = ctx.measureText(focus.label).width;
+            const lx = Math.min(Math.max(fsx + 12, 4), w - tw - 20);
+            const ly = Math.max(fsy - 14, 14);
+            ctx.fillStyle = C.chipBg;
+            ctx.strokeStyle = C.chipLine;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(lx - 5, ly - 11, tw + 10, 16, 3);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = C.selected;
+            ctx.fillText(focus.label, lx, ly + 1);
+          }
         }
       }
     }

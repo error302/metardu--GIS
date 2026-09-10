@@ -75,6 +75,30 @@ export interface GBFetchResult {
 }
 
 /* ------------------------------------------------------------------ */
+/* Geometry URL — CORS-direct rewrite with original fallback           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * geoBoundaries geometry lives in a GitHub repository with Git LFS.
+ * The published github.com/.../raw/... URL 302-redirects WITHOUT CORS
+ * headers, so a browser fetch cannot follow it. Two usable direct hosts:
+ *  - media.githubusercontent.com/media/... serves the LFS content with
+ *    Access-Control-Allow-Origin: * (verified live),
+ *  - raw.githubusercontent.com serves non-LFS content the same way.
+ * The fetcher tries the rewritten URL first, then the published one.
+ */
+export function toDirectGeometryUrl(url: string): string[] {
+  const m = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/raw\/(.+)$/);
+  if (!m) return [url];
+  const [, owner, repo, path] = m;
+  return [
+    `https://media.githubusercontent.com/media/${owner}/${repo}/${path}`,
+    `https://raw.githubusercontent.com/${owner}/${repo}/${path}`,
+    url,
+  ];
+}
+
+/* ------------------------------------------------------------------ */
 /* Validation                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -172,14 +196,12 @@ function bboxesIntersect(a: Bbox, b: Bbox): boolean {
   return a.lonMin <= b.lonMax && a.lonMax >= b.lonMin && a.latMin <= b.latMax && a.latMax >= b.latMin;
 }
 
-const inBbox = (lon: number, lat: number, b: Bbox) =>
-  lon >= b.lonMin && lon <= b.lonMax && lat >= b.latMin && lat <= b.latMax;
-
 /**
  * Fetch a boundary context: metadata, then the pinned simplified GeoJSON,
  * converted to coded survey vertices ("boundary" category). When clipBbox
- * is supplied, only rings intersecting it contribute, and only their
- * vertices inside it are kept — both counts disclosed.
+ * is supplied, only rings intersecting it contribute (a unit containing
+ * the job extent has no vertices near the job — ring-level matching is
+ * the honest scope); rejected rings are counted and disclosed.
  */
 export async function fetchBoundaryContext(
   iso: string,
@@ -197,18 +219,29 @@ export async function fetchBoundaryContext(
   const fetchImpl = deps.fetchImpl ?? fetch;
   const cap = deps.vertexCap ?? GB_VERTEX_CAP;
 
+  // Try the CORS-direct hosts first; fall back to the published URL.
+  const candidates = toDirectGeometryUrl(metadata.simplifiedUrl);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), deps.timeoutMs ?? 120_000);
-  let res: Response;
-  try {
-    res = await fetchImpl(metadata.simplifiedUrl, { signal: ctrl.signal });
-  } catch (e) {
-    clearTimeout(timer);
-    throw new Error(`boundary geometry download failed: ${e instanceof Error ? e.message : "network error"}`);
+  let res: Response | null = null;
+  let lastErr: unknown = null;
+  for (const url of candidates) {
+    try {
+      const r = await fetchImpl(url, { signal: ctrl.signal });
+      if (r.ok) {
+        res = r;
+        break;
+      }
+      lastErr = new Error(`HTTP ${r.status}`);
+    } catch (e) {
+      lastErr = e;
+    }
   }
   clearTimeout(timer);
-  if (!res.ok) {
-    throw new Error(`boundary geometry download returned HTTP ${res.status}`);
+  if (!res) {
+    throw new Error(
+      `boundary geometry download failed: ${lastErr instanceof Error ? lastErr.message : "all mirrors failed"}`,
+    );
   }
   const lenHeader = res.headers.get("content-length");
   if (lenHeader && Number(lenHeader) > GB_MAX_BYTES) {
@@ -240,6 +273,9 @@ export async function fetchBoundaryContext(
     let contributed = 0;
     for (const ring of rings) {
       if (truncated) break;
+      // Ring-level clip: a county CONTAINING the job has no vertices inside
+      // a small job bbox, so vertex-level filtering would silently drop it.
+      // Keep every ring whose bbox intersects the scope; reject the rest.
       if (clipBbox) {
         const rb = ringBbox(ring);
         if (!rb || !bboxesIntersect(rb, clipBbox)) {
@@ -250,10 +286,6 @@ export async function fetchBoundaryContext(
       for (let vi = 0; vi < ring.length; vi++) {
         const [lon, lat] = ring[vi];
         if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
-        if (clipBbox && !inBbox(lon, lat, clipBbox)) {
-          clippedVertices++;
-          continue;
-        }
         if (points.length >= cap) {
           truncated = true;
           break;

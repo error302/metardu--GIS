@@ -95,6 +95,35 @@ export function intersectingDemTiles(bbox: Bbox): DemTileRef[] {
 const EARTH_M_PER_DEG_LAT = 111_320;
 /** Upper bound on crop pixels per axis (keeps requests polite and bounded). */
 export const MAX_CROP_PX = 2048;
+/** Minimum query window — GLO-30 is 30 m native, so a small job extent
+    would decode a handful of pixels. Regional context means the terrain
+    AROUND the job too; the panel discloses the padding. */
+export const DEM_MIN_WINDOW_KM = 3;
+
+/** Pad a bbox up to at least minKm per axis, keeping its center. */
+export function padBboxToMinWindow(bbox: Bbox, minKm = DEM_MIN_WINDOW_KM): Bbox {
+  const latCenter = (bbox.latMin + bbox.latMax) / 2;
+  const cos = Math.max(0.1, Math.cos((latCenter * Math.PI) / 180));
+  const minLatSpan = minKm / (EARTH_M_PER_DEG_LAT / 1000);
+  const minLonSpan = minKm / ((EARTH_M_PER_DEG_LAT / 1000) * cos);
+  let { lonMin, latMin, lonMax, latMax } = bbox;
+  if (lonMax - lonMin < minLonSpan) {
+    const c = (lonMin + lonMax) / 2;
+    lonMin = c - minLonSpan / 2;
+    lonMax = c + minLonSpan / 2;
+  }
+  if (latMax - latMin < minLatSpan) {
+    const c = (latMin + latMax) / 2;
+    latMin = c - minLatSpan / 2;
+    latMax = c + minLatSpan / 2;
+  }
+  return {
+    lonMin: Math.max(-180, lonMin),
+    latMin: Math.max(-85, latMin),
+    lonMax: Math.min(180, lonMax),
+    latMax: Math.min(85, latMax),
+  };
+}
 
 export interface DemCropPlan {
   itemId: string;

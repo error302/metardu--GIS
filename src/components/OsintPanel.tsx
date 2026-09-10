@@ -10,7 +10,7 @@
  */
 
 import React, { useMemo, useState } from "react";
-import { Satellite, Search, Download, AlertTriangle, RefreshCw, Trash2, Check } from "lucide-react";
+import { Satellite, Search, Download, AlertTriangle, RefreshCw, Trash2, Check, MapPin, Landmark, LocateFixed } from "lucide-react";
 import { SurveyPoint } from "../types/spatial";
 import {
   OVERPASS_PRESETS,
@@ -28,12 +28,31 @@ import {
   OSM_LICENSE,
   OSM_ATTRIBUTION,
 } from "../core/osint/overpass";
+import {
+  searchPlaces,
+  validateGeocodeQuery,
+  describeGeocodeResult,
+  GeocodeResult,
+  NOMINATIM_SERVICE,
+  NOMINATIM_LICENSE,
+  NOMINATIM_ATTRIBUTION,
+} from "../core/osint/geocode";
+import {
+  fetchBoundaryContext,
+  GBFetchResult,
+  GB_SERVICE,
+  GB_ATTRIBUTION,
+  ADM_LEVELS,
+  AdmLevel,
+} from "../core/osint/boundaries";
 import { recordExternalSource, clearExternalSources } from "../core/osint/registry";
 
 interface OsintPanelProps {
   /** Document extent in WGS84 lon/lat (computed by App from the working CRS). */
   wgs84Bbox: OverpassBbox | null;
   onImportPoints: (points: SurveyPoint[], layerName: string, notes: string[]) => void;
+  /** Recenter the 2D canvas on a WGS84 point (place search). */
+  onLocate?: (lon: number, lat: number, label: string) => void;
 }
 
 const RADIUS_OPTIONS = [1, 2, 5, 10, 25];
@@ -60,7 +79,7 @@ function countByPreset(result: OverpassFetchResult): Record<OverpassPreset, numb
   return counts;
 }
 
-export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoints }) => {
+export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoints, onLocate }) => {
   const [radiusKm, setRadiusKm] = useState(5);
   const [selected, setSelected] = useState<Set<OverpassPreset>>(new Set(DEFAULT_PRESETS));
   const [fetching, setFetching] = useState(false);
@@ -146,6 +165,95 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
   const presetCounts = result ? countByPreset(result) : null;
   const canFetch = !!queryBbox && !bboxError && presetsSelected.length > 0 && !fetching;
 
+  /* ---------------- Locate (Nominatim place search) ---------------- */
+  const [locQuery, setLocQuery] = useState("");
+  const [locSearching, setLocSearching] = useState(false);
+  const [locResults, setLocResults] = useState<GeocodeResult[] | null>(null);
+  const [locError, setLocError] = useState<string | null>(null);
+
+  const runLocate = async () => {
+    const qErr = validateGeocodeQuery(locQuery);
+    if (qErr) {
+      setLocError(qErr);
+      return;
+    }
+    setLocSearching(true);
+    setLocError(null);
+    try {
+      const r = await searchPlaces(locQuery, { limit: 5 });
+      setLocResults(r.results);
+      // Chain of custody — the search itself is a consulted source.
+      recordExternalSource({
+        service: NOMINATIM_SERVICE,
+        endpoint: r.endpoint,
+        license: NOMINATIM_LICENSE,
+        attribution: NOMINATIM_ATTRIBUTION,
+        fetchedAt: r.fetchedAt,
+        featureCount: r.results.length,
+        note: `Place search "${locQuery.trim()}"`,
+      });
+    } catch (e) {
+      setLocError((e as Error).message);
+      setLocResults(null);
+    } finally {
+      setLocSearching(false);
+    }
+  };
+
+  /* ---------------- Jurisdictional context (geoBoundaries) ---------------- */
+  const [iso, setIso] = useState("KEN");
+  const [adm, setAdm] = useState<AdmLevel>("ADM1");
+  const [gbFetching, setGbFetching] = useState(false);
+  const [gbResult, setGbResult] = useState<GBFetchResult | null>(null);
+  const [gbImported, setGbImported] = useState(false);
+  const [gbError, setGbError] = useState<string | null>(null);
+
+  const runBoundaryFetch = async () => {
+    setGbFetching(true);
+    setGbError(null);
+    setGbResult(null);
+    setGbImported(false);
+    try {
+      // Clip to the document scope when the document has an extent.
+      const r = await fetchBoundaryContext(iso.trim(), adm, wgs84Bbox);
+      setGbResult(r);
+    } catch (e) {
+      setGbError((e as Error).message);
+    } finally {
+      setGbFetching(false);
+    }
+  };
+
+  const runBoundaryImport = () => {
+    if (!gbResult || gbResult.points.length === 0) return;
+    const notes: string[] = [
+      `Source: ${GB_SERVICE} — ${gbResult.endpoint}`,
+      `Geometry: ${gbResult.geometryUrl}`,
+      `License: ${gbResult.metadata.license} (${GB_ATTRIBUTION}) — boundary year ${gbResult.metadata.year}`,
+      `Scope: ${gbResult.metadata.iso} ${gbResult.metadata.adm}, ${gbResult.unitNames.length} units, ${gbResult.points.length} vertices kept` +
+        (wgs84Bbox ? `, clipped to the document scope (${gbResult.clippedVertices} dropped)` : " (unclipped)"),
+    ];
+    if (gbResult.truncated) {
+      notes.push(`Vertex cap reached — geometry truncated at ${gbResult.points.length} vertices`);
+    }
+    notes.push(
+      "Open boundary context is indicative — NOT survey-grade. Statutory boundary determination requires licensed cadastral products.",
+    );
+    recordExternalSource({
+      service: GB_SERVICE,
+      endpoint: gbResult.endpoint,
+      license: gbResult.metadata.license,
+      attribution: GB_ATTRIBUTION,
+      fetchedAt: gbResult.fetchedAt,
+      featureCount: gbResult.points.length,
+      note:
+        `${gbResult.metadata.iso} ${gbResult.metadata.adm} (${gbResult.metadata.year}) — ${gbResult.unitNames.length} units` +
+        (wgs84Bbox ? `, clipped to scope (${gbResult.clippedVertices} dropped)` : ""),
+    });
+    onImportPoints(gbResult.points, `${gbResult.metadata.iso} ${gbResult.metadata.adm} boundaries`, notes);
+    setGbImported(true);
+  };
+
   return (
     <div className="h-full flex bg-app">
       <div className="flex-1 flex flex-col items-center justify-start p-6 overflow-auto">
@@ -158,7 +266,7 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
             <div>
               <h1 className="text-[15px] font-semibold text-ink leading-tight">OSINT Sources</h1>
               <p className="text-[11.5px] text-ink-3">
-                Open ground context from public intelligence feeds
+                Locate places, pull ground context and jurisdictional frames
               </p>
             </div>
             <div className="flex-1" />
@@ -333,6 +441,182 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
             )}
           </div>
 
+          {/* Locate — Nominatim */}
+          <div className="mt-3 bg-panel border border-line-strong rounded-[4px]">
+            <div className="px-4 py-3 border-b border-line">
+              <div className="flex items-center gap-2">
+                <LocateFixed className="w-4 h-4 text-ink-3" />
+                <span className="ui-label">Locate a place</span>
+                <div className="flex-1" />
+                <span className="text-[10.5px] text-ink-3">Nominatim · ODbL</span>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  className="ui-input text-[12px] flex-1"
+                  placeholder="e.g. Westlands, Nairobi"
+                  value={locQuery}
+                  onChange={(e) => setLocQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") runLocate();
+                  }}
+                />
+                <button
+                  onClick={runLocate}
+                  disabled={locSearching}
+                  className="ui-btn text-[12px]"
+                  title="Search OpenStreetMap places (max 1 request/second)"
+                >
+                  {locSearching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              {locError && (
+                <p className="mt-2 text-[11px] text-risk-high flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {locError}
+                </p>
+              )}
+            </div>
+            {locResults && (
+              <div className="px-4 py-2">
+                {locResults.length === 0 && (
+                  <p className="text-[11.5px] text-ink-3 py-1">No matching places found.</p>
+                )}
+                {locResults.map((r) => (
+                  <div
+                    key={`${r.osmType}-${r.osmId}-${r.placeId}`}
+                    className="flex items-center gap-2 py-1.5 border-b border-line last:border-b-0"
+                  >
+                    <MapPin className="w-3.5 h-3.5 text-ink-3 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11.5px] text-ink truncate">{r.label}</p>
+                      <p className="text-[10.5px] text-ink-3 tnum">{describeGeocodeResult(r)}</p>
+                    </div>
+                    <button
+                      className="ui-btn text-[11px]"
+                      title="Recenter the 2D canvas on this place"
+                      onClick={() => onLocate?.(r.lon, r.lat, r.label)}
+                    >
+                      <LocateFixed className="w-3 h-3" />
+                      <span>Locate</span>
+                    </button>
+                  </div>
+                ))}
+                <p className="text-[10px] text-ink-3 mt-1">
+                  Each search is recorded in the provenance registry; rate limited to 1 request/second.
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Jurisdictional context — geoBoundaries */}
+          <div className="mt-3 bg-panel border border-line-strong rounded-[4px]">
+            <div className="px-4 py-3 border-b border-line">
+              <div className="flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-ink-3" />
+                <span className="ui-label">Jurisdictional context</span>
+                <div className="flex-1" />
+                <span className="text-[10.5px] text-ink-3">geoBoundaries gbOpen</span>
+              </div>
+              <p className="mt-1 text-[11px] text-ink-3 leading-relaxed">
+                Administrative boundary geometry around the document scope,
+                clipped to the query extent when a document is open.
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  className="ui-input text-[12px] w-[90px]"
+                  placeholder="ISO3"
+                  value={iso}
+                  onChange={(e) => {
+                    setIso(e.target.value.toUpperCase());
+                    setGbResult(null);
+                    setGbImported(false);
+                  }}
+                  maxLength={3}
+                  title="ISO 3166-1 alpha-3 country code, e.g. KEN, TZA, UGA"
+                />
+                <select
+                  className="ui-select text-[12px] w-[110px]"
+                  value={adm}
+                  onChange={(e) => {
+                    setAdm(e.target.value as AdmLevel);
+                    setGbResult(null);
+                    setGbImported(false);
+                  }}
+                >
+                  {ADM_LEVELS.map((a) => (
+                    <option key={a} value={a}>
+                      {a === "ADM0" ? "ADM0 — country" : a === "ADM1" ? "ADM1 — province" : "ADM2 — district"}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={runBoundaryFetch}
+                  disabled={gbFetching || iso.trim().length !== 3}
+                  className="ui-btn text-[12px]"
+                  title="Fetch simplified boundary geometry clipped to the document scope"
+                >
+                  {gbFetching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  <span>{gbFetching ? "Fetching…" : "Fetch"}</span>
+                </button>
+              </div>
+              {gbError && (
+                <p className="mt-2 text-[11px] text-risk-high flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {gbError}
+                </p>
+              )}
+            </div>
+            {gbResult && (
+              <div className="px-4 py-3 border-t border-line">
+                <div className="flex items-center gap-2">
+                  <span className="ui-label">Fetch result</span>
+                  <div className="flex-1" />
+                  <span className="text-[10.5px] text-ink-3 tnum">
+                    {gbResult.metadata.iso} {gbResult.metadata.adm} · {gbResult.metadata.year}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  <div className="bg-sunken border border-line rounded-[3px] px-2 py-1">
+                    <p className="text-[9.5px] uppercase tracking-wide text-ink-3">Units</p>
+                    <p className="text-[12px] tnum text-ink">{gbResult.unitNames.length}</p>
+                  </div>
+                  <div className="bg-sunken border border-line rounded-[3px] px-2 py-1">
+                    <p className="text-[9.5px] uppercase tracking-wide text-ink-3">Vertices kept</p>
+                    <p className="text-[12px] tnum text-ink">{gbResult.points.length.toLocaleString("en-US")}</p>
+                  </div>
+                  <div className="bg-sunken border border-line rounded-[3px] px-2 py-1">
+                    <p className="text-[9.5px] uppercase tracking-wide text-ink-3">Clipped</p>
+                    <p className="text-[12px] tnum text-ink">{gbResult.clippedVertices.toLocaleString("en-US")}</p>
+                  </div>
+                  <div className="bg-sunken border border-line rounded-[3px] px-2 py-1">
+                    <p className="text-[9.5px] uppercase tracking-wide text-ink-3">License</p>
+                    <p className="text-[11px] text-ink truncate" title={gbResult.metadata.license}>
+                      {gbResult.metadata.license}
+                    </p>
+                  </div>
+                </div>
+                {gbResult.truncated && (
+                  <p className="mt-1.5 text-[11px] text-risk-high">Vertex cap reached — geometry was truncated.</p>
+                )}
+                {gbResult.points.length === 0 && (
+                  <p className="mt-1.5 text-[11px] text-ink-2">
+                    No {gbResult.metadata.adm} units intersect the document scope — widen the scope or pick a higher
+                    admin level.
+                  </p>
+                )}
+                <button
+                  onClick={runBoundaryImport}
+                  disabled={gbImported || gbFetching || gbResult.points.length === 0}
+                  className="ui-btn-accent text-[12px] mt-2.5"
+                  title="Ingest as coded boundary vertices and record provenance"
+                >
+                  {gbImported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
+                  <span>{gbImported ? "Imported" : "Import into document"}</span>
+                </button>
+              </div>
+            )}
+          </div>
+
           {/* Session record */}
           <div className="mt-3 flex items-center gap-2">
             <p className="text-[10.5px] text-ink-3 leading-relaxed flex-1">
@@ -344,9 +628,10 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
           </div>
 
           <p className="mt-1.5 text-[10.5px] text-ink-3 leading-relaxed">
-            Data © OpenStreetMap contributors, {OSM_LICENSE}. OSM geometry is
-            community-mapped and indicative only — never a substitute for a
-            licensed boundary survey.
+            Data © OpenStreetMap contributors, {OSM_LICENSE}; boundary data
+            under each dataset's published license (shown per fetch). OSM and
+            open boundary geometry are community-mapped and indicative only —
+            never a substitute for a licensed boundary survey.
           </p>
           <div className="mt-1">
             <button

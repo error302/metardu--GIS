@@ -8,6 +8,7 @@
 import * as assert from "assert";
 import {
   glo30ItemId,
+  padBboxToMinWindow,
   intersectingDemTiles,
   planDemFetch,
   decodeCropTiff,
@@ -183,6 +184,26 @@ assert.strictEqual(glo30ItemId(-33, 151), "Copernicus_DSM_COG_10_S33_00_E151_00_
   const tight = intersectingDemTiles({ lonMin: 36, latMin: -1, lonMax: 37, latMax: 0 });
   assert.strictEqual(tight.length, 1, "integer-bounded bbox = one tile");
   assert.strictEqual(tight[0].itemId, "Copernicus_DSM_COG_10_S01_00_E036_00_DEM");
+}
+
+/* ---------------- minimum query window ---------------- */
+
+{
+  // A tiny job extent (~400 m) still gets a ≥3 km regional window, centered
+  const tiny: Bbox = { lonMin: 36.7912, latMin: -1.2859, lonMax: 36.7945, latMax: -1.2823 };
+  const paddedBox = padBboxToMinWindow(tiny);
+  const latSpanKm = (paddedBox.latMax - paddedBox.latMin) * 111.32;
+  const lonSpanKm = (paddedBox.lonMax - paddedBox.lonMin) * 111.32 * Math.cos((-1.284 * Math.PI) / 180);
+  assert.ok(latSpanKm >= 2.99 && latSpanKm < 3.2, `padded lat span ≈ 3 km, got ${latSpanKm}`);
+  assert.ok(lonSpanKm >= 2.99 && lonSpanKm < 3.2, `padded lon span ≈ 3 km, got ${lonSpanKm}`);
+  // center preserved
+  assert.ok(
+    Math.abs((paddedBox.lonMin + paddedBox.lonMax) / 2 - (tiny.lonMin + tiny.lonMax) / 2) < 1e-9,
+    "lon center kept",
+  );
+  // a window already ≥3 km passes through unchanged
+  const big: Bbox = { lonMin: 36.0, latMin: -1.5, lonMax: 37.0, latMax: -0.5 };
+  assert.deepStrictEqual(padBboxToMinWindow(big), big, "no padding when already wide");
 }
 
 /* ------------------------------------------------------------------ */
