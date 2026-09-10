@@ -110,6 +110,46 @@ Verified by `tests/cartography.test.ts` (photometry, placement, zone
 parsing, locator snapping, integration render) and visual QA renders of
 both statutory presets over a 6k-point real-pipeline scenario.
 
+### Atlas Series standard (multi-sheet, this branch)
+
+Large jobs no longer squeeze onto one sheet. The **Atlas Series** turns the
+project extent into a proper map book — the rules now in force:
+
+1. **One uniform scale** — every sheet of an atlas draws at the same
+   1:N from the standard engineering/topographic series
+   (1:250 … 1:1,000,000). Auto planning takes the largest series scale
+   whose tiling fits a sheet cap (1/4/9/16/25); a fixed scale is honoured
+   even when it breaches the cap, and the breach is disclosed on the plan
+   card AND in the footer of every affected sheet — never silently clamped.
+2. **Common tiling grid with overlap** — sheet origins advance by
+   ground size × (1 − overlap), default 10 %, centred over the extent so
+   overhang is symmetric. Consequence: graticule lines (drawn at absolute
+   round ground steps, 50 m–100 km) continue exactly across neighbours,
+   which is what makes the set read as one map.
+3. **Atlas naming and navigation** — rows lettered A (north) downward,
+   columns numbered from the west; sheets named `A1…`; every frame edge
+   carries a go-to tab for the neighbour it abuts (interior sheets get
+   four). The generated **SHEET INDEX** sheet draws every labelled
+   rectangle plus the amber project extent, at a disclosed approximate
+   fit scale.
+4. **Sheet furniture** — identity header (atlas title / SHEET {label} /
+   sheet N of M / locality · CRS), edge coordinate labels, north arrow,
+   scale bar on a backing plate, factual footer with CRS, organization,
+   and date.
+5. **Explicit-extent frames** — `ComposerMapFrame.extentOverride`
+   (additive v1 field) places the standard frame renderer at the exact
+   planned extent, so every frame layer (relief, contours, suitability,
+   hazards, energy, vectors, beacons) comes along unchanged and the
+   no-fabricated-figures contract still holds per sheet.
+6. **Whole-book delivery** — per-sheet SVG, 300-dpi PNG (fonts embedded),
+   and print, plus export-all that walks index + every sheet.
+
+Verified by `tests/composer-atlas.test.ts` (scale-series selection,
+coverage and centring, overlap arithmetic, naming/neighbour graph, cap
+disclosure, tile-ceiling refusal, sheet furniture, index sheet, explicit
+-extent frame integration, determinism) and live QA over both the Upper
+Hill parcel (6 sheets @ 1:500) and the Rift corridor (6 sheets @ 1:1,000).
+
 ### OSINT integration standard (v2, this branch)
 
 The workstation now consults open intelligence sources under the same

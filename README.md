@@ -100,6 +100,7 @@ The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in 
 ### 10. Print Composer (Desktop-Grade Cartography)
 * Versioned template schema (ISO A4–A1, mm geometry) with 13 composable element kinds: map frames (fit or fixed 1:N), computed tables, KPI strips, legends, method-note provenance, locator insets, certification and signoff blocks.
 * Statutory Form 4 and Planning Atlas presets route through one render engine with live fit preview, SVG download, 300-DPI PNG rasterisation (fonts embedded), and @page-sized print.
+* **Atlas Series (multi-sheet map book):** the project extent tiles into an atlas of sheets at ONE uniform scale drawn from a standard engineering/topographic series (1:250–1:1,000,000) — auto mode takes the largest scale fitting a sheet cap (1/4/9/16/25), fixed-scale mode is honoured with any cap breach disclosed on the plan and on the sheets themselves. Sheets tile on a common grid with a configurable overlap (default 10 %, centred symmetrically) so grid lines continue across neighbours; rows are lettered A (north) downward, columns numbered from the west; every sheet's frame edges carry neighbour go-to tabs. Each sheet renders with an absolute-value graticule (round 50 m–100 km steps), edge coordinate labels, north arrow, backed scale bar, identity header, and factual footer; a generated SHEET INDEX sheet shows every rectangle plus the amber project extent at disclosed approximate scale. Per-sheet SVG / 300-dpi PNG / print, plus export-all for the whole book including the index.
 * **Atlas cartography:** TIN facet shaded relief (NW 315° / 45° sun) beneath the theme, index-contour elevation labels with halo text (arc-length placement, upright, budgeted), point-label decluttering (hazard > cluster), boundary casing, graticule ticks, and a locator inset placing the parcel on an adaptive UTM grid with the zone captioned.
 * Legends disclose their classification: per-class counts and the exact MCDA class breaks from the engine's own constants — every colour on the sheet is re-derivable.
 * Sensitivity analysis: MCDA weight sliders re-evaluate the composed decision sheet live, with exact weights and uncertainty disclosed on the sheet.
@@ -138,10 +139,10 @@ The full 50,000-point processing pipeline runs in ~1.2 s off the main thread in 
 
 ## Test Suite & Verification
 
-Twenty-eight test suites verify geodetic accuracy, parser robustness, mathematical precision, spatial-index parity against brute force, Shapefile byte roundtrips, GeoPackage writer conformance, WKT CRS parsing, EWKB reading, provenance integrity (including OSINT chain of custody), CRDT convergence, GEOS-parity corridor geometry, atlas cartography, and the OSINT surface (Overpass query determinism and failover plus multipolygon ring assembly, Nominatim parsing and rate discipline, geoBoundaries clipping and URL failover, Sentinel-2 tile planning and radiometric normalization, FIRMS CSV parsing and watchlist diffing, GLO-30 GeoTIFF decoding against byte-exact fixtures, and DEM analysis against analytic ramps):
+Twenty-nine test suites verify geodetic accuracy, parser robustness, mathematical precision, spatial-index parity against brute force, Shapefile byte roundtrips, GeoPackage writer conformance, WKT CRS parsing, EWKB reading, provenance integrity (including OSINT chain of custody), CRDT convergence, GEOS-parity corridor geometry, atlas cartography, the atlas series planner and renderer (uniform-scale tiling, cap disclosure, overlap geometry, neighbour graph, sheet furniture, index sheet, explicit-extent frames), and the OSINT surface (Overpass query determinism and failover plus multipolygon ring assembly, Nominatim parsing and rate discipline, geoBoundaries clipping and URL failover, Sentinel-2 tile planning and radiometric normalization, FIRMS CSV parsing and watchlist diffing, GLO-30 GeoTIFF decoding against byte-exact fixtures, and DEM analysis against analytic ramps):
 
 ```bash
-# Run all 28 test suites
+# Run all 29 test suites
 npm test
 
 # Performance benchmarks (hard budgets, CI-exitable)
