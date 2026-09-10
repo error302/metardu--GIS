@@ -135,8 +135,22 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
       `Fetched: ${result.fetchedAt}`,
       "OSM is indicative context — NOT survey-grade. Do not use for statutory boundary determination.",
     ];
+    if (result.parse.assembledRelations > 0)
+      notes.push(
+        `${result.parse.assembledRelations} multipolygon relation${
+          result.parse.assembledRelations === 1 ? "" : "s"
+        } assembled into rings${
+          result.parse.orphanInners > 0
+            ? `; ${result.parse.orphanInners} orphan inner ring(s) excluded`
+            : ""
+        }`,
+      );
     if (result.parse.skippedRelations > 0)
-      notes.push(`${result.parse.skippedRelations} relations skipped (multipolygon assembly out of scope)`);
+      notes.push(
+        `${result.parse.skippedRelations} relation${
+          result.parse.skippedRelations === 1 ? "" : "s"
+        } skipped — non-multipolygon or incomplete members (no partial geometry invented)`,
+      );
     if (result.parse.unresolvedWays > 0)
       notes.push(`${result.parse.unresolvedWays} ways had no resolvable geometry and were skipped`);
 
@@ -425,8 +439,9 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
                 </div>
                 <p className="mt-2 text-[11px] text-ink-3 tnum">
                   {result.parse.features.length.toLocaleString("en-US")} features ·{" "}
-                  {result.parse.skippedRelations} relations skipped ·{" "}
-                  {result.parse.unresolvedWays} unresolved ways
+                  {result.parse.assembledRelations} relation
+                  {result.parse.assembledRelations === 1 ? "" : "s"} assembled ·{" "}
+                  {result.parse.skippedRelations} skipped · {result.parse.unresolvedWays} unresolved
                 </p>
                 <button
                   onClick={runImport}

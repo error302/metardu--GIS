@@ -12,12 +12,14 @@
  *    context" and the source (endpoint, license, timestamp, feature count)
  *    is recorded into the provenance registry.
  *  - The query is deterministic: same bbox + same presets = same query text.
- *  - Relations (multipolygon landuse, route masters) are intentionally not
- *    assembled in v1 — the parser reports how many were skipped instead of
- *    inventing a partial geometry.
+ *  - Multipolygon relations ARE assembled (member ways chained into rings,
+ *    holes assigned to their containing outer, RFC 7946 orientation). What
+ *    cannot be closed from the data is skipped and counted — a partial
+ *    geometry is never invented.
  */
 
 import { FeatureCategory, SurveyPoint } from "../../types/spatial";
+import { assembleRelation, RelationMemberInput } from "./assembly";
 
 /* ------------------------------------------------------------------ */
 /* Source identity                                                     */
@@ -120,7 +122,7 @@ export const OVERPASS_PRESETS: Record<OverpassPreset, OverpassPresetSpec> = {
     id: "buildings",
     label: "Buildings & structures",
     description: "Mapped building footprints — compare against the surveyed plan.",
-    selectors: ['way["building"]'],
+    selectors: ['way["building"]', 'relation["building"]'],
     category: "building",
   },
   roads: {
@@ -134,14 +136,18 @@ export const OVERPASS_PRESETS: Record<OverpassPreset, OverpassPresetSpec> = {
     id: "water",
     label: "Watercourses & waterbodies",
     description: "Rivers, streams and drainage — riparian reserve context.",
-    selectors: ['way["waterway"]', 'way["natural"="water"]'],
+    selectors: [
+      'way["waterway"]',
+      'way["natural"="water"]',
+      'relation["natural"="water"]',
+    ],
     category: "water",
   },
   landuse: {
     id: "landuse",
     label: "Land use",
     description: "Farmland, forest, residential and industrial zoning polygons.",
-    selectors: ['way["landuse"]'],
+    selectors: ['way["landuse"]', 'relation["landuse"]'],
     category: "vegetation",
   },
   places: {
@@ -195,6 +201,13 @@ export function describeQueryScope(bbox: OverpassBbox, presets: OverpassPreset[]
 /* Response parser                                                     */
 /* ------------------------------------------------------------------ */
 
+interface OverpassMember {
+  type: "node" | "way" | "relation";
+  ref: number;
+  role?: string;
+  geometry?: { lat: number; lon: number }[];
+}
+
 interface OverpassElement {
   type: "node" | "way" | "relation";
   id: number;
@@ -202,24 +215,48 @@ interface OverpassElement {
   lon?: number;
   nodes?: number[];
   geometry?: { lat: number; lon: number }[];
+  members?: OverpassMember[];
   tags?: Record<string, string>;
 }
 
 export interface OsmFeature {
-  osmType: "node" | "way";
+  osmType: "node" | "way" | "relation";
   osmId: number;
   kind: "point" | "line" | "polygon";
-  /** point: one part, one coord · line: polyline parts · polygon: rings */
+  /** point: one part, one coord · line: polyline parts · polygon: rings
+   *  (for assembled relations: outer ring followed by its inner holes) */
   parts: [number, number][][];
   tags: Record<string, string>;
 }
 
 export interface OverpassParseResult {
   features: OsmFeature[];
-  /** Relations are not assembled in v1 — counted, never fabricated. */
+  /** Multipolygon relations successfully assembled into ring geometry. */
+  assembledRelations: number;
+  /** Relations that did not assemble — counted, never fabricated. */
   skippedRelations: number;
+  /** Inner rings with no containing outer — excluded and disclosed. */
+  orphanInners: number;
   /** Ways whose geometry was missing and could not be resolved from nodes. */
   unresolvedWays: number;
+}
+
+/** Resolve a way's coordinates from inline geometry or the node index. */
+function wayCoords(
+  el: OverpassElement,
+  nodeIndex: Map<number, [number, number]>,
+): [number, number][] | null {
+  if (Array.isArray(el.geometry) && el.geometry.length > 0) {
+    const coords = el.geometry
+      .filter((g) => typeof g.lat === "number" && typeof g.lon === "number")
+      .map((g) => [g.lon, g.lat] as [number, number]);
+    return coords.length >= 2 ? coords : null;
+  }
+  if (Array.isArray(el.nodes) && el.nodes.length > 0) {
+    const coords = el.nodes.map((id) => nodeIndex.get(id)).filter(Boolean) as [number, number][];
+    return coords.length >= 2 ? coords : null;
+  }
+  return null;
 }
 
 /** Parse an Overpass `out geom` JSON response into normalized features. */
@@ -229,19 +266,75 @@ export function parseOverpassResponse(json: unknown): OverpassParseResult {
     throw new Error("Response is not Overpass JSON (missing elements array)");
   }
 
-  // Node index for ways that ship `nodes` without inline `geometry`
-  // (e.g. older mirrors or `out body` fallbacks).
+  // Pass 1 — indexes. The node index also serves ways that ship `nodes`
+  // without inline `geometry` (older mirrors or `out body` fallbacks).
   const nodeIndex = new Map<number, [number, number]>();
   for (const el of doc.elements) {
     if (el.type === "node" && typeof el.lat === "number" && typeof el.lon === "number") {
       nodeIndex.set(el.id, [el.lon, el.lat]);
     }
   }
+  const wayIndex = new Map<number, [number, number][]>();
+  for (const el of doc.elements) {
+    if (el.type !== "way") continue;
+    const coords = wayCoords(el, nodeIndex);
+    if (coords) wayIndex.set(el.id, coords);
+  }
 
   const features: OsmFeature[] = [];
+  let assembledRelations = 0;
   let skippedRelations = 0;
+  let orphanInners = 0;
   let unresolvedWays = 0;
 
+  // Pass 2 — multipolygon relations. Member geometry comes inline (from
+  // `out geom`) or falls back to the way index. A relation only becomes a
+  // feature when it assembles COMPLETELY; otherwise it is counted, never
+  // approximated. Member ways of assembled relations are consumed so they
+  // do not also appear as duplicate standalone features.
+  const consumedWays = new Set<number>();
+  for (const el of doc.elements) {
+    if (el.type !== "relation") continue;
+    if (!el.tags || Object.keys(el.tags).length === 0) continue;
+    if (el.tags.type !== "multipolygon") {
+      skippedRelations++; // route masters, boundary super-relations, etc.
+      continue;
+    }
+    const members: RelationMemberInput[] = (el.members ?? [])
+      .filter((m) => m.type === "way")
+      .map((m) => ({
+        ref: m.ref,
+        role: m.role ?? "",
+        coords:
+          m.geometry && m.geometry.length >= 2
+            ? m.geometry
+                .filter((g) => typeof g.lat === "number" && typeof g.lon === "number")
+                .map((g) => [g.lon, g.lat] as [number, number])
+            : (wayIndex.get(m.ref) ?? null),
+      }));
+    const out = assembleRelation(members);
+    if (out.status !== "assembled") {
+      skippedRelations++;
+      continue;
+    }
+    assembledRelations++;
+    orphanInners += out.orphanInners;
+    for (const m of members) consumedWays.add(m.ref);
+    const parts: [number, number][][] = [];
+    for (const poly of out.polygons) {
+      parts.push(poly.outer);
+      parts.push(...poly.inners);
+    }
+    features.push({
+      osmType: "relation",
+      osmId: el.id,
+      kind: "polygon",
+      parts,
+      tags: el.tags,
+    });
+  }
+
+  // Pass 3 — standalone nodes and ways (relation members already emitted).
   for (const el of doc.elements) {
     if (!el.tags || Object.keys(el.tags).length === 0) continue; // untagged helpers
 
@@ -258,15 +351,9 @@ export function parseOverpassResponse(json: unknown): OverpassParseResult {
     }
 
     if (el.type === "way") {
-      let coords: [number, number][] | null = null;
-      if (Array.isArray(el.geometry) && el.geometry.length > 0) {
-        coords = el.geometry
-          .filter((g) => typeof g.lat === "number" && typeof g.lon === "number")
-          .map((g) => [g.lon, g.lat] as [number, number]);
-      } else if (Array.isArray(el.nodes) && el.nodes.length > 0) {
-        coords = el.nodes.map((id) => nodeIndex.get(id)).filter(Boolean) as [number, number][];
-      }
-      if (!coords || coords.length < 2) {
+      if (consumedWays.has(el.id)) continue; // already inside an assembled relation
+      const coords = wayCoords(el, nodeIndex);
+      if (!coords) {
         unresolvedWays++;
         continue;
       }
@@ -284,10 +371,10 @@ export function parseOverpassResponse(json: unknown): OverpassParseResult {
       continue;
     }
 
-    if (el.type === "relation") skippedRelations++;
+    // Relations were fully handled in pass 2.
   }
 
-  return { features, skippedRelations, unresolvedWays };
+  return { features, assembledRelations, skippedRelations, orphanInners, unresolvedWays };
 }
 
 /* ------------------------------------------------------------------ */
