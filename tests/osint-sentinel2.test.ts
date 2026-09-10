@@ -18,6 +18,8 @@ import {
   approxCellMeters,
   changeCellsToCsv,
   changeCellsToGeoJson,
+  lumaHistogram,
+  histogramMatchLut,
   DEFAULT_CELLS_PER_TILE,
   DEFAULT_THRESHOLD,
 } from "../src/core/osint/sentinel2";
@@ -223,6 +225,78 @@ const syntheticPlan = (): import("../src/core/osint/sentinel2").ChangePlan => {
   const m = approxCellMeters(14, 0, 8);
   assert.ok(Math.abs(m - resolutionAtZoom(14) * 32) < 1e-6, "equator cell meters");
   assert.ok(approxCellMeters(14, -60, 8) < m, "higher latitude shrinks the cell");
+}
+
+/* ---------------- radiometric normalization ---------------- */
+
+/** Horizontal luma gradient: tone = x>>1 (rich 0..127 distribution). */
+const gradientTile = (): Uint8ClampedArray => {
+  const t = new Uint8ClampedArray(256 * 256 * 4);
+  for (let y = 0; y < 256; y++) {
+    for (let x = 0; x < 256; x++) {
+      const i = (y * 256 + x) * 4;
+      const v = x >> 1;
+      t[i] = v;
+      t[i + 1] = v;
+      t[i + 2] = v;
+      t[i + 3] = 255;
+    }
+  }
+  return t;
+};
+
+{
+  // Strictly increasing count ramp -> strictly increasing CDF -> the
+  // first-crossing walk is the exact identity for equal distributions.
+  const ramp = Array.from({ length: 256 }, (_, i) => 100 + i);
+  const identity = histogramMatchLut(ramp, [...ramp]);
+  for (let v = 0; v < 256; v++) assert.strictEqual(identity[v], v, `identity at ${v}`);
+
+  // A +50 shift with MATCHED total mass: reference support 0..205, B
+  // support 50..255 — quantile k of B equals quantile k of A shifted by 50.
+  const rampA: number[] = new Array(256).fill(0);
+  for (let i = 0; i <= 205; i++) rampA[i] = 100 + i;
+  const shifted: number[] = new Array(256).fill(0);
+  for (let v = 50; v <= 255; v++) shifted[v] = 100 + (v - 50);
+  const shiftedLut = histogramMatchLut(rampA, shifted);
+  assert.strictEqual(shiftedLut[150], 100, "shifted tone remaps to reference");
+  assert.strictEqual(shiftedLut[255], 205, "top of the shifted support maps to the reference top");
+  for (let v = 1; v < 256; v++)
+    assert.ok(shiftedLut[v] >= shiftedLut[v - 1], `LUT monotone at ${v}`);
+
+  // End-to-end: a global +50 drift must NOT flag; a real new feature must.
+  // Epoch A is a gradient; epoch B is the same gradient shifted +50, with a
+  // bright 32x32 change block in the top-left corner.
+  const a = gradientTile();
+  const b = gradientTile();
+  for (let i = 0; i < b.length; i += 4) {
+    b[i] += 50;
+    b[i + 1] += 50;
+    b[i + 2] += 50;
+  }
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 32; x++) {
+      const i = (y * 256 + x) * 4;
+      b[i] = 250;
+      b[i + 1] = 250;
+      b[i + 2] = 250;
+    }
+  }
+  const raw = diffTilePair(a, b, DEFAULT_THRESHOLD);
+  const rawChanged = raw.reduce((s, v) => s + v, 0);
+  assert.strictEqual(rawChanged, 65536, "without normalization everything flags");
+
+  const lut = histogramMatchLut(lumaHistogram(a), lumaHistogram(b));
+  const norm = diffTilePair(a, b, DEFAULT_THRESHOLD, lut);
+  const normChanged = norm.reduce((s, v) => s + v, 0);
+  assert.strictEqual(normChanged, 1024, "only the real change block survives normalization");
+
+  // ...and the flagged pixels sit exactly in the top-left cell.
+  const counts = cellStatsFromMask(norm, DEFAULT_CELLS_PER_TILE);
+  assert.strictEqual(counts[0], 1024, "flags concentrate in the changed cell");
+  let rest = 0;
+  for (let i = 1; i < counts.length; i++) rest += counts[i];
+  assert.strictEqual(rest, 0, "normalized shift is silent elsewhere");
 }
 
 /* ---------------- serialization ---------------- */

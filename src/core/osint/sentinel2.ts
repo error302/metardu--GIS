@@ -10,10 +10,14 @@
  * (the common case for field work), this yields a defensible "what changed
  * here between these two years" screen at ~10 m native resolution.
  *
- * Method: for each tile pair, luma (0.299R+0.587G+0.114B) absolute
- * difference above a threshold marks a changed pixel; pixels aggregate to
- * measurable lon/lat cells (cellsPerTile² per tile) so results land as
- * countable, downloadable evidence — not a vague picture.
+ * Method: per tile pair, luma (0.299R+0.587G+0.114B) absolute difference
+ * above a threshold marks a changed pixel — but first the epochs are
+ * RADIOMETRICALLY NORMALIZED by luma histogram matching (epoch B's luma
+ * distribution is remapped onto epoch A's through a 256-entry CDF LUT),
+ * because annual mosaics are composited from different acquisitions and
+ * their global tonality drifts far beyond any real change signal. Pixels
+ * then aggregate to measurable lon/lat cells (cellsPerTile² per tile) so
+ * results land as countable, downloadable evidence — not a vague picture.
  *
  * Honesty contract:
  *  - Annual mosaics composite acquisitions from different dates: phenology,
@@ -44,7 +48,7 @@ export const S2_ATTRIBUTION =
   "Sentinel-2 cloudless by EOX IT Services (contains modified Copernicus Sentinel data)";
 
 export const S2_DISCLOSURE =
-  "Screening-grade epoch comparison — annual mosaics composite acquisitions from different dates, so vegetation, water and shadow changes flag alongside real structural change. Verify every flagged cell against the imagery pair. Mosaic license CC-BY-NC-SA 4.0: change masks are derivatives (non-commercial use, share-alike, attribution required).";
+  "Screening-grade epoch comparison — annual mosaics composite acquisitions from different dates. Epochs are radiometrically normalized by luma histogram matching before differencing, and vegetation, water or shadow changes still flag alongside real structural change. Verify every flagged cell against the imagery pair. Mosaic license CC-BY-NC-SA 4.0: change masks are derivatives (non-commercial use, share-alike, attribution required).";
 
 /** Mosaic years published by EOX under the s2cloudless-{year}_3857 ids. */
 export const S2_YEARS = [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024] as const;
@@ -197,14 +201,59 @@ export function approxCellMeters(zoom: number, lat: number, cellsPerTile: number
 /* Pixel differencing + cell aggregation                               */
 /* ------------------------------------------------------------------ */
 
+/** 256-bin histogram of luma over an RGBA buffer. */
+export function lumaHistogram(px: Uint8ClampedArray): number[] {
+  const hist = new Array<number>(256).fill(0);
+  for (let i = 0; i < px.length; i += 4) {
+    const l = Math.round(0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2]);
+    hist[l]++;
+  }
+  return hist;
+}
+
+/** Normalized cumulative distribution of a histogram. */
+function cdf(hist: number[]): number[] {
+  const total = hist.reduce((s, v) => s + v, 0);
+  const out = new Array<number>(256);
+  let acc = 0;
+  for (let v = 0; v < 256; v++) {
+    acc += hist[v];
+    out[v] = total > 0 ? acc / total : v / 255;
+  }
+  return out;
+}
+
+/**
+ * Histogram-matching LUT: maps epoch B luma values onto epoch A's
+ * distribution (LUT[b] = closest a by CDF quantile). Identity when the
+ * distributions match; this is the standard radiometric normalization for
+ * bi-sensor change differencing.
+ */
+export function histogramMatchLut(histA: number[], histB: number[]): Uint8Array {
+  const cdfA = cdf(histA);
+  const cdfB = cdf(histB);
+  const lut = new Uint8Array(256);
+  // First-CDF-crossing walk: LUT[b] is the smallest a whose reference CDF
+  // covers B's quantile. Monotone, O(256) total, and exact-identity on the
+  // distribution's support (CDF plateaus on zero-mass bins map to 0).
+  let j = 0;
+  for (let b = 0; b < 256; b++) {
+    while (j < 255 && cdfA[j] < cdfB[b]) j++;
+    lut[b] = j;
+  }
+  return lut;
+}
+
 /**
  * Luma absolute difference between two RGBA buffers. Returns a 0/1 mask
- * (1 = changed). Buffers must be the same length.
+ * (1 = changed). Buffers must be the same length. An optional LUT (from
+ * `histogramMatchLut`) remaps B's luma before differencing.
  */
 export function diffTilePair(
   a: Uint8ClampedArray,
   b: Uint8ClampedArray,
   threshold = DEFAULT_THRESHOLD,
+  lut?: Uint8Array,
 ): Uint8Array {
   if (a.length !== b.length) throw new Error("Tile buffers differ in size");
   if (a.length % 4 !== 0) throw new Error("Buffers are not RGBA");
@@ -212,7 +261,8 @@ export function diffTilePair(
   const mask = new Uint8Array(a.length / 4);
   for (let p = 0, i = 0; p < mask.length; p++, i += 4) {
     const la = 0.299 * a[i] + 0.587 * a[i + 1] + 0.114 * a[i + 2];
-    const lb = 0.299 * b[i] + 0.587 * b[i + 1] + 0.114 * b[i + 2];
+    let lb = 0.299 * b[i] + 0.587 * b[i + 1] + 0.114 * b[i + 2];
+    if (lut) lb = lut[Math.max(0, Math.min(255, Math.round(lb)))];
     const d = la > lb ? la - lb : lb - la;
     mask[p] = d > t ? 1 : 0;
   }
@@ -491,6 +541,21 @@ export async function runChangeDetection(opts: ChangeRunOptions): Promise<Change
   const epochA = await fetchEpoch(opts.yearA);
   const epochB = await fetchEpoch(opts.yearB);
 
+  // Radiometric normalization: match epoch B's luma distribution onto
+  // epoch A's over the whole scene before differencing. Without this the
+  // mosaic pair's global tonality drift saturates the screen.
+  const histA = new Array<number>(256).fill(0);
+  const histB = new Array<number>(256).fill(0);
+  for (const t of plan.tiles) {
+    const key = `${t.x}:${t.y}`;
+    const a = epochA.get(key);
+    const b = epochB.get(key);
+    if (!a || !b) continue;
+    lumaHistogram(a).forEach((v, i) => (histA[i] += v));
+    lumaHistogram(b).forEach((v, i) => (histB[i] += v));
+  }
+  const lut = histogramMatchLut(histA, histB);
+
   const diffs: TileDiffMap = new Map();
   for (const t of plan.tiles) {
     const key = `${t.x}:${t.y}`;
@@ -500,7 +565,7 @@ export async function runChangeDetection(opts: ChangeRunOptions): Promise<Change
       failedTiles++;
       continue;
     }
-    diffs.set(key, cellStatsFromMask(diffTilePair(a, b, threshold), cellsPerTile));
+    diffs.set(key, cellStatsFromMask(diffTilePair(a, b, threshold, lut), cellsPerTile));
   }
   if (diffs.size === 0) {
     throw new Error(
@@ -512,8 +577,9 @@ export async function runChangeDetection(opts: ChangeRunOptions): Promise<Change
   const latCenter = (bbox.latMin + bbox.latMax) / 2;
   const summary = summarizeChange(cells, plan, latCenter, threshold, flagRatio);
 
-  // Preview: grayscale "after" epoch with changed pixels tinted red.
-  const preview = await renderPreview(plan, epochB, diffs, cellsPerTile);
+  // Preview: grayscale "after" epoch; cells tint red at the SAME flag
+  // threshold the stats use — the picture must match the numbers.
+  const preview = await renderPreview(plan, epochB, diffs, cellsPerTile, flagRatio);
 
   return {
     cells,
@@ -536,6 +602,7 @@ async function renderPreview(
   epochB: Map<string, Uint8ClampedArray>,
   diffs: TileDiffMap,
   cellsPerTile: number,
+  flagRatio: number,
 ): Promise<string> {
   const size = TILE_SIZE;
   const cols = Math.max(...plan.tiles.map((t) => t.x)) - Math.min(...plan.tiles.map((t) => t.x)) + 1;
@@ -553,15 +620,16 @@ async function renderPreview(
     if (!base) continue;
     const counts = diffs.get(`${t.x}:${t.y}`);
     const cellSize = size / cellsPerTile;
+    const cellPx = cellSize * cellSize;
     for (let i = 0, p = 0; p < size * size; p++, i += 4) {
       const x = p % size;
       const y = (p / size) | 0;
       const cx = (x / cellSize) | 0;
       const cy = (y / cellSize) | 0;
-      const changed = counts ? counts[cy * cellsPerTile + cx] > 0 : false;
-      // Cell-level tint: a cell is red when the CELL (not the pixel) changed —
-      // consistent with the aggregated evidence, and reads cleanly in print.
-      if (changed) {
+      const idx = cy * cellsPerTile + cx;
+      const flagged = counts ? counts[idx] / cellPx >= flagRatio : false;
+      // Cell-level tint, threshold-consistent with the reported stats.
+      if (flagged) {
         img.data[i] = 220;
         img.data[i + 1] = 48;
         img.data[i + 2] = 48;
