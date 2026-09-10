@@ -10,7 +10,7 @@
  */
 
 import React, { useMemo, useState } from "react";
-import { Satellite, Search, Download, AlertTriangle, RefreshCw, Trash2, Check, MapPin, Landmark, LocateFixed } from "lucide-react";
+import { Satellite, Search, Download, AlertTriangle, RefreshCw, Trash2, Check, MapPin, Landmark, LocateFixed, Layers } from "lucide-react";
 import { SurveyPoint } from "../types/spatial";
 import {
   OVERPASS_PRESETS,
@@ -46,6 +46,19 @@ import {
   AdmLevel,
 } from "../core/osint/boundaries";
 import { recordExternalSource, clearExternalSources } from "../core/osint/registry";
+import {
+  S2_YEARS,
+  S2Year,
+  S2_SERVICE_PREFIX,
+  S2_LICENSE,
+  S2_ATTRIBUTION,
+  S2_DISCLOSURE,
+  s2EndpointPrefix,
+  runChangeDetection,
+  ChangeRunResult,
+  changeCellsToCsv,
+  changeCellsToGeoJson,
+} from "../core/osint/sentinel2";
 
 interface OsintPanelProps {
   /** Document extent in WGS84 lon/lat (computed by App from the working CRS). */
@@ -58,6 +71,17 @@ interface OsintPanelProps {
 const RADIUS_OPTIONS = [1, 2, 5, 10, 25];
 const DEFAULT_PRESETS: OverpassPreset[] = ["buildings", "roads", "water"];
 const FETCH_LIMIT = 20000;
+
+/** Trigger a client-side file download (blob -> object URL -> click). */
+function downloadFile(name: string, content: string, mime: string): void {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
 
 /** Per-preset feature counts using the same tag priority as the mapper. */
 function countByPreset(result: OverpassFetchResult): Record<OverpassPreset, number> {
@@ -268,6 +292,75 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
     setGbImported(true);
   };
 
+  /* ---------------- Sentinel-2 epoch change detection ---------------- */
+  const [s2YearA, setS2YearA] = useState<S2Year>(2018);
+  const [s2YearB, setS2YearB] = useState<S2Year>(2024);
+  const [s2Threshold, setS2Threshold] = useState(30);
+  const [s2FlagRatio, setS2FlagRatio] = useState(0.15);
+  const [s2Running, setS2Running] = useState(false);
+  const [s2Progress, setS2Progress] = useState<{ done: number; total: number } | null>(null);
+  const [s2Result, setS2Result] = useState<ChangeRunResult | null>(null);
+  const [s2Error, setS2Error] = useState<string | null>(null);
+
+  const runS2 = async () => {
+    if (!queryBbox || s2YearA === s2YearB) return;
+    setS2Running(true);
+    setS2Error(null);
+    setS2Result(null);
+    try {
+      const r = await runChangeDetection({
+        bbox: queryBbox,
+        yearA: s2YearA,
+        yearB: s2YearB,
+        threshold: s2Threshold,
+        flagRatio: s2FlagRatio,
+        onProgress: (done, total) => setS2Progress({ done, total }),
+      });
+      setS2Result(r);
+      // Chain of custody — one record per epoch layer consulted.
+      const fetchedAt = new Date().toISOString();
+      const size = bboxSizeKm(queryBbox);
+      for (const year of [r.yearA, r.yearB]) {
+        recordExternalSource({
+          service: `${S2_SERVICE_PREFIX} ${year} (EOX)`,
+          endpoint: s2EndpointPrefix(year),
+          license: S2_LICENSE,
+          attribution: S2_ATTRIBUTION,
+          fetchedAt,
+          featureCount: r.tilePairs,
+          note:
+            `Epoch change screen ${r.yearA} vs ${r.yearB} — bbox [${queryBbox.latMin.toFixed(4)}, ${queryBbox.lonMin.toFixed(4)}, ${queryBbox.latMax.toFixed(4)}, ${queryBbox.lonMax.toFixed(4)}] ≈ ${size.widthKm.toFixed(1)} × ${size.heightKm.toFixed(1)} km; ` +
+            `${r.tilePairs} tile pairs at z${r.zoom} (${r.failedTiles} failed), ${r.summary.flaggedCells} flagged cells`,
+        });
+      }
+    } catch (e) {
+      setS2Error((e as Error).message);
+    } finally {
+      setS2Running(false);
+      setS2Progress(null);
+    }
+  };
+
+  const downloadS2Csv = () => {
+    if (!s2Result) return;
+    const flagged = s2Result.cells.filter((c) => c.flagged);
+    downloadFile(
+      `s2-change-${s2Result.yearA}-${s2Result.yearB}-flagged.csv`,
+      changeCellsToCsv(flagged),
+      "text/csv",
+    );
+  };
+
+  const downloadS2GeoJson = () => {
+    if (!s2Result) return;
+    const gj = changeCellsToGeoJson(s2Result.cells, s2Result.summary, s2Result.yearA, s2Result.yearB);
+    downloadFile(
+      `s2-change-${s2Result.yearA}-${s2Result.yearB}-grid.geojson`,
+      JSON.stringify(gj, null, 2),
+      "application/geo+json",
+    );
+  };
+
   return (
     <div className="h-full flex bg-app">
       <div className="flex-1 flex flex-col items-center justify-start p-6 overflow-auto">
@@ -280,7 +373,7 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
             <div>
               <h1 className="text-[15px] font-semibold text-ink leading-tight">OSINT Sources</h1>
               <p className="text-[11.5px] text-ink-3">
-                Locate places, pull ground context and jurisdictional frames
+                Ground context, jurisdictional frames, epoch change screens
               </p>
             </div>
             <div className="flex-1" />
@@ -628,6 +721,160 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
                   {gbImported ? <Check className="w-3.5 h-3.5" /> : <Download className="w-3.5 h-3.5" />}
                   <span>{gbImported ? "Imported" : "Import into document"}</span>
                 </button>
+              </div>
+            )}
+          </div>
+
+          {/* Sentinel-2 epoch change detection — EOX s2cloudless */}
+          <div className="mt-3 bg-panel border border-line-strong rounded-[4px]">
+            <div className="px-4 py-3 border-b border-line">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-ink-3" />
+                <span className="ui-label">Change detection (Sentinel-2)</span>
+                <div className="flex-1" />
+                <span className="text-[10.5px] text-ink-3">EOX s2cloudless · CC-BY-NC-SA</span>
+              </div>
+              <p className="mt-1 text-[11px] text-ink-3 leading-relaxed">
+                Pixel-diff two annual cloudless mosaics over the query scope.
+                Flagged cells are screening evidence — verify each against the
+                imagery pair before acting on it.
+              </p>
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                <select
+                  className="ui-select text-[12px] w-[104px]"
+                  value={s2YearA}
+                  onChange={(e) => setS2YearA(Number(e.target.value) as S2Year)}
+                  title="Before epoch"
+                >
+                  {S2_YEARS.map((y) => (
+                    <option key={y} value={y}>
+                      {y} (before)
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="ui-select text-[12px] w-[104px]"
+                  value={s2YearB}
+                  onChange={(e) => setS2YearB(Number(e.target.value) as S2Year)}
+                  title="After epoch"
+                >
+                  {S2_YEARS.map((y) => (
+                    <option key={y} value={y}>
+                      {y} (after)
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="ui-select text-[12px] w-[150px]"
+                  value={s2Threshold}
+                  onChange={(e) => setS2Threshold(Number(e.target.value))}
+                  title="Luma difference (0-255) that counts as a changed pixel"
+                >
+                  <option value={20}>Δ20 — sensitive</option>
+                  <option value={30}>Δ30 — balanced</option>
+                  <option value={45}>Δ45 — conservative</option>
+                </select>
+                <select
+                  className="ui-select text-[12px] w-[128px]"
+                  value={s2FlagRatio}
+                  onChange={(e) => setS2FlagRatio(Number(e.target.value))}
+                  title="Share of a cell's pixels that must change for the cell to flag"
+                >
+                  <option value={0.1}>10% cell</option>
+                  <option value={0.15}>15% cell</option>
+                  <option value={0.25}>25% cell</option>
+                </select>
+                <button
+                  onClick={runS2}
+                  disabled={!queryBbox || s2Running || s2YearA === s2YearB || !!bboxError}
+                  className="ui-btn text-[12px]"
+                  title={
+                    s2YearA === s2YearB
+                      ? "Pick two different epochs"
+                      : "Fetch both epochs and diff the tile pairs"
+                  }
+                >
+                  {s2Running ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+                  <span>
+                    {s2Running
+                      ? s2Progress
+                        ? `Diffing ${s2Progress.done}/${s2Progress.total}…`
+                        : "Diffing…"
+                      : "Run change screen"}
+                  </span>
+                </button>
+              </div>
+              {s2Error && (
+                <p className="mt-2 text-[11px] text-risk-high flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span className="break-words">{s2Error}</span>
+                </p>
+              )}
+            </div>
+
+            {s2Result && (
+              <div className="px-4 py-3 border-t border-line">
+                <div className="flex items-center gap-2">
+                  <span className="ui-label">Screen result</span>
+                  <div className="flex-1" />
+                  <span className="text-[10.5px] text-ink-3 tnum">
+                    {s2Result.yearA} → {s2Result.yearB} · z{s2Result.zoom}
+                  </span>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-1.5">
+                  <div className="bg-sunken border border-line rounded-[3px] px-2 py-1">
+                    <p className="text-[9.5px] uppercase tracking-wide text-ink-3">Flagged cells</p>
+                    <p className="text-[12px] tnum text-ink">
+                      {s2Result.summary.flaggedCells.toLocaleString("en-US")}
+                      <span className="text-ink-3 text-[10.5px]">
+                        {" "}
+                        ({s2Result.summary.flaggedPct.toFixed(1)}%)
+                      </span>
+                    </p>
+                  </div>
+                  <div className="bg-sunken border border-line rounded-[3px] px-2 py-1">
+                    <p className="text-[9.5px] uppercase tracking-wide text-ink-3">Changed pixels</p>
+                    <p className="text-[12px] tnum text-ink">{s2Result.summary.changedPct.toFixed(2)}%</p>
+                  </div>
+                  <div className="bg-sunken border border-line rounded-[3px] px-2 py-1">
+                    <p className="text-[9.5px] uppercase tracking-wide text-ink-3">Cell size ≈</p>
+                    <p className="text-[12px] tnum text-ink">{Math.round(s2Result.summary.approxCellMeters)} m</p>
+                  </div>
+                  <div className="bg-sunken border border-line rounded-[3px] px-2 py-1">
+                    <p className="text-[9.5px] uppercase tracking-wide text-ink-3">Tile pairs</p>
+                    <p className="text-[12px] tnum text-ink">
+                      {s2Result.tilePairs}
+                      {s2Result.failedTiles > 0 && (
+                        <span className="text-risk-high text-[10.5px]"> ({s2Result.failedTiles} failed)</span>
+                      )}
+                    </p>
+                  </div>
+                </div>
+                <img
+                  src={s2Result.previewDataUrl}
+                  alt={`Change preview ${s2Result.yearA} to ${s2Result.yearB}`}
+                  className="mt-2.5 w-full rounded-[3px] border border-line"
+                  title="Grayscale after-epoch mosaic; red cells are flagged change"
+                />
+                <p className="mt-1 text-[10px] text-ink-3">
+                  Red = flagged change cell on the {s2Result.yearB} mosaic. Download the full
+                  grid (GeoJSON) or the flagged schedule (CSV) below.
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <button onClick={downloadS2Csv} className="ui-btn text-[11.5px]" title="Flagged cells as a CSV schedule">
+                    <Download className="w-3.5 h-3.5" />
+                    <span>CSV (flagged)</span>
+                  </button>
+                  <button
+                    onClick={downloadS2GeoJson}
+                    className="ui-btn text-[11.5px]"
+                    title="Full cell grid as GeoJSON with flagged properties and source metadata"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>GeoJSON (grid)</span>
+                  </button>
+                </div>
+                <p className="mt-2 text-[10.5px] text-ink-3 leading-relaxed">{S2_DISCLOSURE}</p>
               </div>
             )}
           </div>
