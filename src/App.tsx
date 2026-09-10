@@ -21,6 +21,7 @@ import { useHistoryState } from "./hooks/use-history";
 import { initGeoidModel, subscribeGeoidStatus, GeoidStatus } from "./core/geoid/grid";
 import { DEFAULT_MCDA_WEIGHTS } from "./core/mcda-suitability";
 import { ComposerPanel } from "./components/ComposerPanel";
+import { AtlasSeriesPanel } from "./components/AtlasSeriesPanel";
 import { PostgisPanel } from "./components/PostgisPanel";
 import { ProvenancePanel } from "./components/ProvenancePanel";
 import { TraversePanel } from "./components/TraversePanel";
@@ -486,6 +487,7 @@ export const App: React.FC = () => {
         )}
         {activeTab === "deedplan" && <DeedPlanViewer result={pipelineResult} />}
         {activeTab === "atlas" && <PlanningAtlasViewer result={pipelineResult} />}
+        {activeTab === "atlas-series" && <AtlasSeriesPanel result={pipelineResult} />}
         {activeTab === "composer" && <ComposerPanel result={pipelineResult} />}
         {activeTab === "postgis" && (
           <PostgisPanel onImportPoints={handlePostgisImport} />

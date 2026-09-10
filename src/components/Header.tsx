@@ -11,6 +11,7 @@ import {
   Zap,
   FileText,
   Map,
+  BookOpen,
   Table2,
   Undo2,
   Redo2,
@@ -37,6 +38,7 @@ export type ActiveTab =
   | "energy"
   | "deedplan"
   | "atlas"
+  | "atlas-series"
   | "composer"
   | "datagrid"
   | "postgis"
@@ -92,6 +94,7 @@ const NAV_GROUPS: { label: string; items: { id: ActiveTab; label: string; icon: 
     items: [
       { id: "deedplan", label: "Deed Plan (Form 4)", icon: FileText },
       { id: "atlas", label: "Planning Atlas", icon: Map },
+      { id: "atlas-series", label: "Atlas Series", icon: BookOpen },
       { id: "composer", label: "Print Composer", icon: Printer },
     ],
   },
