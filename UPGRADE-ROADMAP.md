@@ -110,6 +110,47 @@ Verified by `tests/cartography.test.ts` (photometry, placement, zone
 parsing, locator snapping, integration render) and visual QA renders of
 both statutory presets over a 6k-point real-pipeline scenario.
 
+### OSINT integration standard (v2, this branch)
+
+The workstation now consults open intelligence sources under the same
+contract as every other input: **disclosed, licensed, and never
+survey-grade**. The rules now in force:
+
+1. **Deterministic queries** — same document extent + same presets
+   produce the same Overpass QL text (canonical preset order, global
+   bbox, explicit element cap). A reviewer can re-run the query.
+2. **Chain of custody** — every external fetch is recorded (service,
+   endpoint, license, attribution, ISO timestamp, feature count, scope
+   line) and appears as a `src:external-*` node in the provenance graph,
+   which is embedded in GeoJSON, LandXML, GeoPackage and lodgement
+   exports. Consulting an external source changes the integrity digest.
+3. **Honesty about fidelity** — OSM data is labeled *indicative context,
+   NOT survey-grade* in the panel, the import notes, and the provenance
+   node. Relations are counted and skipped (never partially assembled);
+   unresolvable ways are disclosed per fetch.
+4. **Import parity** — OSINT features become ordinary coded survey
+   vertices (stable OSM-id-derived point ids, tag-priority categories,
+   names in descriptions), reprojected WGS84 → the active working CRS,
+   so every downstream tool (canvas, attribute table, MCDA, composer)
+   treats them as data.
+5. **License hygiene** — ODbL attribution and the CC-BY-SA/OpenTopoMap
+   and EOX/Copernicus credits render on-canvas and in panel disclosures.
+
+Delivered on this branch: `src/core/osint/overpass.ts` (query builder,
+parser, tag mapping, failover fetch), `src/core/osint/registry.ts`
+(session evidence registry), `OsintPanel` (scope, presets, preview,
+import), provenance integration, and two open basemaps (Sentinel-2
+cloudless via EOX, OpenTopoMap). Locked by `tests/osint-overpass.test.ts`
+(60+ assertions) and the external-source section of
+`tests/provenance.test.ts`.
+
+Deferred (documented scope, not forgotten): Sentinel-2 **change
+detection** between two epochs (requires a scene-pair service such as
+Copernicus Data Space or Sentinel Hub — API-key territory), FIRMS /
+Global Forest Watch monitoring watchlists on tracked parcels, and
+Overpass **multipolygon relation** assembly (needs a ring-assignment
+engine with its own parity harness).
+
 ---
 
 ## Part II — Platform Upgrade Roadmap
