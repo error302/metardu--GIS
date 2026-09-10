@@ -10,7 +10,7 @@
  */
 
 import React, { useMemo, useState } from "react";
-import { Satellite, Search, Download, AlertTriangle, RefreshCw, Trash2, Check, MapPin, Landmark, LocateFixed, Layers } from "lucide-react";
+import { Satellite, Search, Download, AlertTriangle, RefreshCw, Trash2, Check, MapPin, Landmark, LocateFixed, Layers, Flame } from "lucide-react";
 import { SurveyPoint } from "../types/spatial";
 import {
   OVERPASS_PRESETS,
@@ -59,6 +59,23 @@ import {
   changeCellsToCsv,
   changeCellsToGeoJson,
 } from "../core/osint/sentinel2";
+import {
+  FIRMS_SERVICE,
+  FIRMS_LICENSE,
+  FIRMS_ATTRIBUTION,
+  FIRMS_SOURCES,
+  FirmsSource,
+  FIRMS_KEY_URL,
+  MAPKEY_STORAGE_KEY,
+  validateMapKey,
+  loadWatchlists,
+  saveWatchlists,
+  makeWatchlist,
+  checkWatchlist,
+  applyCheck,
+  FireWatchlist,
+  CheckOutcome,
+} from "../core/osint/firms";
 
 interface OsintPanelProps {
   /** Document extent in WGS84 lon/lat (computed by App from the working CRS). */
@@ -359,6 +376,140 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
       JSON.stringify(gj, null, 2),
       "application/geo+json",
     );
+  };
+
+  /* ---------------- Active-fire watchlists (NASA FIRMS) ---------------- */
+  const [firmsKey, setFirmsKey] = useState<string>(() =>
+    typeof localStorage !== "undefined" ? localStorage.getItem(MAPKEY_STORAGE_KEY) ?? "" : "",
+  );
+  const [firmsSources, setFirmsSources] = useState<Set<FirmsSource>>(
+    new Set<FirmsSource>(["VIIRS_SNPP_NRT", "VIIRS_NOAA20_NRT"]),
+  );
+  const [firmsDayRange, setFirmsDayRange] = useState(2);
+  const [firmsWatchName, setFirmsWatchName] = useState("");
+  const [watchlists, setWatchlists] = useState<FireWatchlist[]>(() =>
+    loadWatchlists(typeof localStorage !== "undefined" ? localStorage : null),
+  );
+  const [checkingIds, setCheckingIds] = useState<Set<string>>(new Set());
+  const [checkOutcomes, setCheckOutcomes] = useState<Record<string, CheckOutcome>>({});
+  const [lastCheckedId, setLastCheckedId] = useState<string | null>(null);
+  const [firmsError, setFirmsError] = useState<string | null>(null);
+
+  const persistWatchlists = (next: FireWatchlist[]) => {
+    setWatchlists(next);
+    saveWatchlists(typeof localStorage !== "undefined" ? localStorage : null, next);
+  };
+
+  const saveFirmsKey = (key: string) => {
+    setFirmsKey(key);
+    if (typeof localStorage !== "undefined") localStorage.setItem(MAPKEY_STORAGE_KEY, key);
+  };
+
+  const toggleFirmsSource = (id: FirmsSource) => {
+    setFirmsSources((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const createWatch = () => {
+    if (!queryBbox || firmsSources.size === 0) return;
+    const err = validateMapKey(firmsKey);
+    if (err) {
+      setFirmsError(err);
+      return;
+    }
+    const name =
+      firmsWatchName.trim() ||
+      `Fire watch — ${(queryBbox.lonMax - queryBbox.lonMin) * 111.32 * Math.cos((queryBbox.latMin * Math.PI) / 180) < 60 ? "local scope" : "wide scope"} ${new Date().toISOString().slice(0, 10)}`;
+    const list = makeWatchlist(name, queryBbox, [...firmsSources], firmsDayRange);
+    persistWatchlists([...watchlists, list]);
+    setFirmsWatchName("");
+  };
+
+  const removeWatch = (id: string) => {
+    persistWatchlists(watchlists.filter((w) => w.id !== id));
+    setCheckOutcomes((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    if (lastCheckedId === id) setLastCheckedId(null);
+  };
+
+  const runWatchCheck = async (list: FireWatchlist) => {
+    setFirmsError(null);
+    const keyErr = validateMapKey(firmsKey);
+    if (keyErr) {
+      setFirmsError(keyErr);
+      return;
+    }
+    setCheckingIds((prev) => new Set(prev).add(list.id));
+    try {
+      const out = await checkWatchlist(list, firmsKey);
+      setCheckOutcomes((prev) => ({ ...prev, [list.id]: out }));
+      setLastCheckedId(list.id);
+      persistWatchlists(watchlists.map((w) => (w.id === list.id ? applyCheck(w, out.alerts, out.checkedAt) : w)));
+      // Chain of custody — one record per check, all source endpoints listed.
+      recordExternalSource({
+        service: FIRMS_SERVICE,
+        endpoint: out.endpoints.join(", "),
+        license: FIRMS_LICENSE,
+        attribution: FIRMS_ATTRIBUTION,
+        fetchedAt: out.checkedAt,
+        featureCount: out.alerts.length,
+        note:
+          `${list.sources.join(", ")} — ${list.dayRange}-day window, bbox [${list.bbox.latMin.toFixed(4)}, ${list.bbox.lonMin.toFixed(4)}, ${list.bbox.latMax.toFixed(4)}, ${list.bbox.lonMax.toFixed(4)}]; ` +
+          `${out.alerts.length} detections, ${out.newAlerts.length} new since last check`,
+      });
+    } catch (e) {
+      setFirmsError((e as Error).message);
+    } finally {
+      setCheckingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(list.id);
+        return next;
+      });
+    }
+  };
+
+  const importWatchAlerts = (list: FireWatchlist) => {
+    const out = checkOutcomes[list.id];
+    if (!out || out.alerts.length === 0) return;
+    const capped = out.alerts.slice(0, 500);
+    const pts: SurveyPoint[] = capped.map((a) => ({
+      id: `FIRMS-${a.alertId}`,
+      easting: a.lon,
+      northing: a.lat,
+      elevation: 0,
+      rawCode: `firms.${a.source}`,
+      category: "terrain",
+      description:
+        `Active fire (${a.instrument || a.source}) ${a.acqDate} ${a.acqTime}` +
+        `${a.frpMW !== null ? ` · FRP ${a.frpMW} MW` : ""}`,
+      properties: {
+        source: a.source,
+        satellite: a.satellite,
+        acq_date: a.acqDate,
+        acq_time: a.acqTime,
+        confidence: a.confidenceRaw,
+        ...(a.frpMW !== null ? { frp_mw: a.frpMW } : {}),
+        daynight: a.dayNight,
+        brightness_k: a.brightnessK ?? "",
+      },
+    }));
+    const notes: string[] = [
+      `Source: ${FIRMS_SERVICE} — ${out.endpoints.join(", ")}`,
+      `License: ${FIRMS_LICENSE} (${FIRMS_ATTRIBUTION})`,
+      `Scope: ${list.name}, ${list.dayRange}-day window, bbox [${list.bbox.latMin.toFixed(4)}, ${list.bbox.lonMin.toFixed(4)}, ${list.bbox.latMax.toFixed(4)}, ${list.bbox.lonMax.toFixed(4)}]`,
+      `Fetched: ${out.checkedAt} — ${out.alerts.length} detections, ${out.newAlerts.length} new since last check`,
+      "Active-fire pixels are screening alerts (≈375 m VIIRS / ≈1 km MODIS centroids), not fire perimeters — verify on imagery before any field or legal action.",
+    ];
+    if (out.alerts.length > capped.length)
+      notes.push(`Capped at 500 of ${out.alerts.length} detections for document hygiene`);
+    onImportPoints(pts, `Active-fire alerts — ${list.name}`, notes);
   };
 
   return (
@@ -879,6 +1030,208 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
             )}
           </div>
 
+          {/* Active-fire watchlists — NASA FIRMS */}
+          <div className="mt-3 bg-panel border border-line-strong rounded-[4px]">
+            <div className="px-4 py-3 border-b border-line">
+              <div className="flex items-center gap-2">
+                <Flame className="w-4 h-4 text-ink-3" />
+                <span className="ui-label">Active-fire watchlists</span>
+                <div className="flex-1" />
+                <span className="text-[10.5px] text-ink-3">NASA FIRMS · public domain</span>
+              </div>
+              <p className="mt-1 text-[11px] text-ink-3 leading-relaxed">
+                Standing VIIRS/MODIS thermal-anomaly watches around a scope of
+                your choice. Each check reports what is burning and what is
+                NEW since the last check — with the diff persisted locally.
+              </p>
+
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  className="ui-input text-[12px] flex-1 font-mono"
+                  type="password"
+                  placeholder="FIRMS MAP_KEY (free, stored locally)"
+                  value={firmsKey}
+                  onChange={(e) => saveFirmsKey(e.target.value.trim())}
+                  title="Free registration key from NASA FIRMS — kept in this browser only"
+                />
+                <a
+                  href={FIRMS_KEY_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] text-accent whitespace-nowrap"
+                  title="Get a free FIRMS MAP_KEY (email registration)"
+                >
+                  Get a key
+                </a>
+              </div>
+
+              <div className="mt-2 flex items-center gap-2 flex-wrap">
+                {FIRMS_SOURCES.map((s) => {
+                  const on = firmsSources.has(s.id);
+                  return (
+                    <label key={s.id} className="flex items-center gap-1.5 cursor-pointer group" title={s.label}>
+                      <input
+                        type="checkbox"
+                        className="hidden"
+                        checked={on}
+                        onChange={() => toggleFirmsSource(s.id)}
+                      />
+                      <span
+                        className={`w-3.5 h-3.5 rounded-[2px] border flex items-center justify-center shrink-0 ${
+                          on ? "bg-accent border-accent" : "border-line-strong group-hover:border-ink-3"
+                        }`}
+                      >
+                        {on && <Check className="w-2.5 h-2.5 text-app" strokeWidth={3} />}
+                      </span>
+                      <span className="text-[11px] text-ink-2">{s.label}</span>
+                    </label>
+                  );
+                })}
+                <select
+                  className="ui-select text-[12px] w-[112px]"
+                  value={firmsDayRange}
+                  onChange={(e) => setFirmsDayRange(Number(e.target.value))}
+                  title="Look-back window per check"
+                >
+                  {[1, 2, 3, 5, 7, 10].map((d) => (
+                    <option key={d} value={d}>
+                      last {d} day{d > 1 ? "s" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  className="ui-input text-[12px] flex-1"
+                  placeholder="Watchlist name (e.g. Parcel boundary watch)"
+                  value={firmsWatchName}
+                  onChange={(e) => setFirmsWatchName(e.target.value)}
+                />
+                <button
+                  onClick={createWatch}
+                  disabled={!queryBbox || firmsSources.size === 0}
+                  className="ui-btn text-[12px]"
+                  title="Create a watchlist covering the current query scope"
+                >
+                  <Flame className="w-3.5 h-3.5" />
+                  <span>Create from scope</span>
+                </button>
+              </div>
+              {!queryBbox && (
+                <p className="mt-1.5 text-[11px] text-ink-3">
+                  Open a survey first — the watch scope follows the document extent.
+                </p>
+              )}
+              {firmsError && (
+                <p className="mt-2 text-[11px] text-risk-high flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span className="break-words">{firmsError}</span>
+                </p>
+              )}
+            </div>
+
+            {watchlists.length > 0 && (
+              <div className="px-4 py-2 border-t border-line">
+                {watchlists.map((w) => {
+                  const out = checkOutcomes[w.id];
+                  const checking = checkingIds.has(w.id);
+                  return (
+                    <div key={w.id} className="py-2 border-b border-line last:border-b-0">
+                      <div className="flex items-center gap-2">
+                        <Flame className="w-3.5 h-3.5 text-ink-3 shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11.5px] text-ink truncate">{w.name}</p>
+                          <p className="text-[10.5px] text-ink-3 tnum">
+                            [{w.bbox.latMin.toFixed(3)}, {w.bbox.lonMin.toFixed(3)}] — [
+                            {w.bbox.latMax.toFixed(3)}, {w.bbox.lonMax.toFixed(3)}] · {w.sources.length}{" "}
+                            source{w.sources.length === 1 ? "" : "s"} · {w.dayRange}d
+                            {w.lastCheckedAt && (
+                              <> · last check {w.lastCheckedAt.slice(0, 16).replace("T", " ")} UTC</>
+                            )}
+                          </p>
+                        </div>
+                        {out && out.newAlerts.length > 0 && (
+                          <span
+                            className="text-[10.5px] px-2 py-0.5 rounded-full border border-accent/60 text-accent tnum"
+                            title="Detections not seen by any earlier check"
+                          >
+                            +{out.newAlerts.length} new
+                          </span>
+                        )}
+                        {out && (
+                          <span className="text-[10.5px] text-ink-3 tnum" title="Detections in the current window">
+                            {out.alerts.length}
+                          </span>
+                        )}
+                        <button
+                          className="ui-btn text-[11px]"
+                          disabled={checking}
+                          onClick={() => runWatchCheck(w)}
+                          title="Fetch the current window and diff against previous checks"
+                        >
+                          {checking ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <RefreshCw className="w-3 h-3" />
+                          )}
+                          <span>Check</span>
+                        </button>
+                        <button
+                          className="ui-btn text-[11px]"
+                          disabled={!out || out.alerts.length === 0}
+                          onClick={() => importWatchAlerts(w)}
+                          title="Import the current detections as coded survey points"
+                        >
+                          <Download className="w-3 h-3" />
+                        </button>
+                        <button
+                          className="ui-btn text-[11px]"
+                          onClick={() => removeWatch(w.id)}
+                          title="Delete this watchlist"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                      {lastCheckedId === w.id && out && out.alerts.length > 0 && (
+                        <div className="mt-1.5 ml-6">
+                          {out.alerts.slice(0, 6).map((a) => (
+                            <div
+                              key={a.alertId}
+                              className="flex items-center gap-2 py-0.5 text-[10.5px] tnum text-ink-3"
+                            >
+                              <span className="text-ink-2">
+                                {a.acqDate} {a.acqTime}
+                              </span>
+                              <span>{a.dayNight === "N" ? "night" : "day"}</span>
+                              <span className="truncate max-w-[110px]">{a.source.replace("_NRT", "")}</span>
+                              <span>
+                                [{a.lat.toFixed(4)}, {a.lon.toFixed(4)}]
+                              </span>
+                              {a.frpMW !== null && <span>{a.frpMW} MW</span>}
+                              {a.confidenceRaw && <span>conf {a.confidenceRaw}</span>}
+                            </div>
+                          ))}
+                          {out.alerts.length > 6 && (
+                            <p className="text-[10px] text-ink-3 mt-0.5">
+                              +{out.alerts.length - 6} more detections in the window
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <p className="py-2 text-[10px] text-ink-3 leading-relaxed">
+                  Watchlists and the seen-alert ring persist in this browser.
+                  Detections are ~375 m (VIIRS) / ~1 km (MODIS) centroids —
+                  screening alerts to verify on imagery, not fire perimeters.
+                  Every check lands in the provenance registry.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Session record */}
           <div className="mt-3 flex items-center gap-2">
             <p className="text-[10.5px] text-ink-3 leading-relaxed flex-1">
@@ -891,9 +1244,12 @@ export const OsintPanel: React.FC<OsintPanelProps> = ({ wgs84Bbox, onImportPoint
 
           <p className="mt-1.5 text-[10.5px] text-ink-3 leading-relaxed">
             Data © OpenStreetMap contributors, {OSM_LICENSE}; boundary data
-            under each dataset's published license (shown per fetch). OSM and
-            open boundary geometry are community-mapped and indicative only —
-            never a substitute for a licensed boundary survey.
+            under each dataset's published license (shown per fetch);
+            Sentinel-2 cloudless mosaics © EOX (CC-BY-NC-SA 4.0, contains
+            modified Copernicus Sentinel data); fire detections from NASA
+            FIRMS (public domain). Open data is community-mapped or
+            model-derived and indicative only — never a substitute for a
+            licensed survey product.
           </p>
           <div className="mt-1">
             <button
