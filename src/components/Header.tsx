@@ -22,6 +22,7 @@ import {
   GitCompare,
   Users,
   Satellite,
+  Mountain,
 } from "lucide-react";
 import { BenchmarkScenario, BENCHMARK_SCENARIOS } from "../data/sample-surveys";
 import { CrsPicker } from "./CrsPicker";
@@ -30,6 +31,7 @@ import { crsEpsgFromMetadata } from "../core/crs";
 export type ActiveTab =
   | "canvas2d"
   | "terrain3d"
+  | "dem"
   | "mcda"
   | "hazards"
   | "energy"
@@ -78,6 +80,7 @@ const NAV_GROUPS: { label: string; items: { id: ActiveTab; label: string; icon: 
     label: "Analysis",
     items: [
       { id: "traverse", label: "Traverse", icon: Crosshair },
+      { id: "dem", label: "Regional Terrain", icon: Mountain },
       { id: "mcda", label: "Suitability (MCDA)", icon: SlidersHorizontal },
       { id: "hazards", label: "Hazard Audit", icon: ShieldAlert },
       { id: "energy", label: "Electrification", icon: Zap },

@@ -27,6 +27,7 @@ import { TraversePanel } from "./components/TraversePanel";
 import { ScenarioComparePanel } from "./components/ScenarioComparePanel";
 import { SyncPanel } from "./components/SyncPanel";
 import { OsintPanel } from "./components/OsintPanel";
+import { DemPanel } from "./components/DemPanel";
 import { OverpassBbox } from "./core/osint/overpass";
 
 export const App: React.FC = () => {
@@ -484,6 +485,7 @@ export const App: React.FC = () => {
         {activeTab === "osint" && (
           <OsintPanel wgs84Bbox={wgs84Bbox} onImportPoints={handleOsintImport} />
         )}
+        {activeTab === "dem" && <DemPanel wgs84Bbox={wgs84Bbox} />}
         {activeTab === "provenance" && <ProvenancePanel result={pipelineResult} />}
         {activeTab === "traverse" && (
           <TraversePanel
